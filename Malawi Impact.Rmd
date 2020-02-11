@@ -1,0 +1,702 @@
+---
+title: "Malawi"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+```
+
+ # Declining Confirmed Malaria Cases among children <5, Malawi, 2019
+ 
+ ## data
+ 
+```{r packages, include= FALSE}
+
+library( readxl )
+
+library( tidyverse)
+library( fpp3 ) # tsibbledata, feasts, fable, tsibble all-in one
+library( GGally )
+library( sugrrants )
+
+# install.packages("fabletools", repos = "https://tidyverts.org")
+library( fabletools )
+# library( brolgar )
+# library( CausalImpact )
+```
+ 
+ !Re-download formulas -- should have all elements from all formulas ...
+ 
+```{r, datasets}
+
+folder = '../dataDictionary/dhis2_dictionary/Formulas/'
+
+
+formulas.file = 'Malawi_Formulas_2020-01-28.xlsx'
+formulas = read_excel( paste0( folder, formulas.file ) , "Formula Elements")
+
+
+confCases.file = 'Malawi_confirmed cases <5yrs opd and chw_2020-01-28.xlsx'
+stockout.file = 'Malawi_RDT Stock outs_2020-01-28.xlsx'
+attendance.file = 'Malawi_OPD Attendance_2020-01-27.xlsx'
+
+confCases.e = read_excel( paste0( folder, confCases.file ) , "formulaData")
+
+confCases = read_excel( paste0( folder, confCases.file ) , "summaryData") %>%
+  rename( orgUnit = orgUnit.x ) %>%
+  mutate( confCases = ifelse( Count.max == 0 , 
+                              NA, 
+                              as.integer( sum )  )) %>%
+  select( orgUnit, orgUnitName , period, confCases)
+
+stockout = read_excel( paste0( folder, stockout.file ) , "formulaData")
+attendance = read_excel( paste0( folder, attendance.file ) , "formulaData")
+
+# Rainfall
+
+
+# count( confCases.e , dataElement, Categories )
+
+# count( stockout , dataElement, Categories )
+# count( attendance , dataElement, Categories )
+```
+
+```{r, dataset}
+
+# Drop count--because facility level data, and pivot 
+idCols = c( 'orgUnit', 'orgUnitName' , 'period' )
+nameCols = c('dataElement' , 'Categories' )
+valueCols = 'SUM'
+
+confCasesW = confCases.e %>% 
+    mutate( SUM = as.integer( SUM ) ) %>%
+    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = valueCols )
+
+stockoutW = stockout %>% 
+    mutate( SUM = as.integer( SUM ) ) %>%
+    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = valueCols )
+
+attendanceW = attendance %>% 
+    mutate( SUM = as.integer( SUM ) ) %>%
+    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = valueCols )
+
+
+# colnames( confCases )
+
+dataset = confCasesW %>% 
+    full_join( confCases , by = idCols ) %>%
+    full_join( stockoutW , by = idCols ) %>%
+    full_join( attendanceW , by = idCols ) 
+
+# glimpse( dataset )
+```
+ - 41,000 observations of 10 variables identified by facility (orgUnit) and month (period)
+ 
+```{r datasetTS}
+
+datasetTS = dataset %>%
+    mutate( month = zoo::as.yearmon( period, "%Y%m") %>%
+                    yearmonth( . ) ) %>% 
+    as_tsibble( ., key = c(orgUnit, orgUnitName) , index = month )
+
+```
+ 
+
+There were fewer confirmed malaria cases in 2019. Restricted analyses to confirmed malaria cases in children < 5. 
+
+```{r, national_value_trends_facet }
+
+datasetTS.0 =  datasetTS %>% 
+   summarise_if( is.integer , sum , na.rm = TRUE ) %>%
+   mutate( orgUnit = 'O' , orgUnitName = 'National' ) 
+
+cols = setdiff( names( datasetTS.0 ) , c('orgUnit', 'orgUnitName' , 'month'))
+
+map( cols , ~datasetTS.0 %>% autoplot( vars( !!.x )   ) +
+         ggtitle( .x ) + theme_bw( base_size = 10 )
+     )
+
+```
+
+
+```{r, national_count_trends_facet }
+
+datasetTS.0.n =  datasetTS %>% 
+   summarise_if( is.integer , ~sum(!is.na(.x))  ) %>%
+   mutate( orgUnit = 'O' , orgUnitName = 'National' ) 
+
+# map( cols , ~datasetTS.0.n  %>% autoplot( vars( !!.x )   ) +
+#          labs( title = .x , subtitle = 'count of non-missing data') +
+#        theme_bw( base_size = 10 )
+#      )
+
+map( cols , ~bind_rows( 
+  datasetTS.0.n %>% mutate( var = 'Count' ) %>% as_tibble() ,
+  datasetTS.0 %>% mutate( var = 'Sum' ) %>% as_tibble()
+                        )  %>% 
+       as_tsibble( index = month, key = c( var, orgUnit, orgUnitName ) ) %>%
+       autoplot( vars( !!.x )   ) +
+       facet_grid( var  ~ . ,scale = 'free_y' ) +
+       labs( title = .x ) +
+       guides( color = FALSE ) +
+       theme_bw( base_size = 10 )
+     )
+
+```
+
+## Frequency of monthly data submitted by facility 
+
+how many facilities have enough data for modeling time-series? 
+
+```{r, histogram_monthly_submissions}
+
+orgUnit.counts = 
+  dataset %>%
+  group_by( orgUnit ) %>% 
+  summarise_if( is.integer, ~sum( !is.na(.) ) )
+
+confCases.counts = orgUnit.counts %>%
+  select( orgUnit , confCases ) %>%
+  mutate( years_of_data = ( confCases / 12 ) %>% round() )  
+
+map( cols , 
+     ~ orgUnit.counts %>%
+       # select( orgUnit , .x ) %>%
+       mutate( years_of_data = ( !! rlang::sym( .x ) / 12 ) %>% 
+                 round(0) %>% as.integer())  %>%
+       ggplot( aes( years_of_data ) ) +
+       geom_histogram( binwidth = 1 ) +
+       labs( title = 'Frequency of monthly data available for each orgUnit' ,
+             subtitle = paste( .x , "(" , 
+                               nrow( orgUnit.counts ) , "facilities )" ) ,
+             y = 'Number of Facilities' ,
+             x = 'Years of Data' 
+  ) +
+    expand_limits( x = 5 ) +   
+    stat_bin( binwidth=1 , geom="text", colour="white", size=3.5,
+           aes( label = ..count.. ), 
+           position=position_stack( vjust=0.5) ) +
+    theme_bw()
+)
+
+# Facility has at least 4 years of confCases daata
+atLeast4Years = orgUnit.counts %>% 
+  group_by( orgUnit ) %>% 
+  summarise_at( cols , ~ ( .x / 12 ) %>% round() >= 4 ) 
+
+atLeast4Years.confCases = atLeast4Years %>% 
+  filter( confCases == TRUE ) %>% 
+  pull( orgUnit )
+
+# Facility has no missing data
+
+maxMonths = length( unique( dataset$period ) )  
+
+noMissing = orgUnit.counts %>% 
+  group_by( orgUnit ) %>% 
+  summarise_at( cols , ~ .x == maxMonths ) 
+
+noMissing.confCases = noMissing %>% 
+  filter( confCases == TRUE ) %>% 
+  pull( orgUnit )
+```
+
+# Summarise missingness
+
+```{r missingness }
+
+```
+
+### Number of facilities with complete data for each series.
+
+### Could reporting be biased by location and/or RDT stockouts? Seasonal plot of reporting.  
+
+
+Combined series, showing number complete.  
+
+
+# Seaonality of data
+
+Season plot (quarterly), aggregated data
+
+```{r, national_trends_facet_seasonal }
+
+endpoints = datasetTS.0 %>% 
+    mutate( year = lubridate::year( month ) , 
+            mnth = lubridate::month( month ) ) %>%
+    filter( mnth == 12 )
+
+datasetTS.0 %>% gg_season( confCases ) +
+         ggtitle( 'confCases' ) + 
+         theme_bw( base_size = 10 )
+
+
+datasetTS.0 %>% as_tibble() %>%
+  group_by( q = yearquarter( month) ) %>%
+  summarise_if( is.integer, sum , na.rm = TRUE )  %>%
+  as_tsibble( index =  q ) %>%
+  fill_gaps() %>%
+  # select( -month ) %>%
+  gg_subseries( confCases ) +
+         ggtitle( 'confCases' ) + 
+         theme_bw( base_size = 10 )
+
+```
+ 
+## Seasonality of missing data? 
+
+```{r}
+
+datasetTS.0.n %>% gg_season( confCases ) +
+  labs( title = 'Count of facilities submitting confCases data') +
+  theme_bw( base_size = 10 )
+
+
+datasetTS.0.n %>% gg_subseries( confCases ) +
+  labs( title = 'Count of facilities submitting confCases data') +
+  theme_bw( base_size = 10 )
+
+datasetTS.0.n %>% as_tibble() %>%
+  group_by( q = yearquarter( month) ) %>%
+  summarise_if( is.integer, mean , na.rm = TRUE )  %>%
+  as_tsibble( index =  q ) %>%
+  fill_gaps() %>%
+  # select( -month ) %>%
+  gg_subseries( confCases ) +
+         ggtitle( 'Mean count of facilities submitting confCases data each month, by quarter' ) + 
+         theme_bw( base_size = 10 )
+```
+
+
+# Impact, aggregated data, national level.  Naive, or crude, model assumes things that probably should not be assumed without good evidence.  
+
+```{r aggregated_features}
+
+# Transform??? no
+lambda <- datasetTS.0 %>%
+  features( confCases , features = guerrero) %>%
+  pull(lambda_guerrero)
+
+datasetTS.0 %>% gg_subseries( confCases)
+
+datasetTS.0 %>% gg_lag 
+
+datasetTS.0 %>% autoplot( log( confCases) )
+datasetTS.0 %>% autoplot( difference( log(confCases) , 2) )
+
+datasetTS.0 %>% 
+  mutate( diffl2 = difference( lag(confCases, 1) , 12 )  ) %>% 
+  gg_tsdisplay( diffl2 , plot_type='partial')
+
+datasetTS.0 %>% 
+  mutate( diffl2 = difference( log(confCases) , 12 ) ) %>%
+  ACF( diffl2) %>% autoplot()
+
+  # features( diffl2, ljung_box, lag = 10)
+
+
+```
+
+```{r aggregated_model} 
+
+ # whole data set
+fit0 = datasetTS.0 %>% 
+    fill_gaps() %>%
+    select( orgUnit, orgUnitName, month, confCases ) %>%
+
+    model( ets = ETS(  log( confCases ) ) ,
+           ets.damped = ETS( confCases ~ trend("Ad") ) ,
+           stl = STL( confCases ~ season(window=12) + trend(window=11)) ,
+           arima = ARIMA( log( confCases ) ) ,
+           fourier = ARIMA( log( confCases ) ~ fourier(K = 1) + PDQ(0,0,0))
+                                     )
+# plot fiited values 
+
+fit0 %>% 
+  select( - stl ) %>%
+  augment() %>% 
+  autoplot(.fitted) +
+  autolayer( datasetTS.0, confCases, color = 'black', alpha = .5  )
+
+# fit0 %>% accuracy( )
+
+
+```
+
+Models for ETS and ARIMA run only when pre-conditioning data with log.  Is there a better conditioning factor? 
+
+```{r aggregated_model_leave_out}
+
+# trainin set
+train.0 = datasetTS.0 %>% filter( month < yearmonth( "2018-Dec" )  ) %>%
+    select( orgUnit, month, confCases ) 
+
+fit.train.0 = train.0 %>% model( ets = ETS(  log( confCases ) ) ,
+                                 arima = ARIMA( log( confCases ) ) ,
+                                 fourier = ARIMA( log( confCases ) ~ fourier(K = 1) + PDQ(0,0,0))
+                                 )
+
+# fit.train.0 %>% components() %>% autoplot( season_adjust )
+
+fit.train.0 %>% accuracy()
+
+# fit.train.0 %>% features( confCases )
+
+# report( fit.train.0 )
+
+# forecast 
+fore = fit.train.0 %>% 
+    # select( orgUnit, ets )  %>% 
+    forecast( h = '13 months' )
+
+fore %>% autoplot( level = NULL ) + autolayer( datasetTS.0 , confCases ) 
+
+accuracy( fore, datasetTS.0 )
+
+map( c('ets', 'arima' , 'fourier') , ~fore %>% filter( .model %in% .x ) %>%  autoplot() + 
+         autolayer( datasetTS.0 , confCases ) +
+         ggtitle( .x )
+)
+
+
+```
+
+For 2 of three models, the actual is within the 80% credible prediction interval.  We need to pay attention to which model is the best fit.  
+
+## cross-validation (national)
+
+```{r crossValidation0}
+train.0.cross = datasetTS.0 %>%
+    select( orgUnit, month, confCases ) %>%
+    stretch_tsibble(.init = 3, .step = 1)
+
+
+fit.train.0 = train.0.cross %>% 
+    model( rw = RW( confCases  ~ drift()) ,
+           # ets = ETS( log(confCases)  ) ,
+           etsadj = ETS( log(confCases)  ~ trend("Ad") ) ,
+           fourier1 = ARIMA( log(confCases) ~ fourier(K = 1) + PDQ(0,0,0)) ,
+           arima = ARIMA( log( log(confCases) ) )
+           ) 
+
+fit.train.0 %>% accuracy()
+
+# fit.train.0  %>% 
+#   select( orgUnit , etsadj ) %>% 
+#   components( fit.train.0 ) %>% autoplot()
+
+fit.train.0  %>% glance() %>% group_by(.model) %>% 
+  summarise_if( is.numeric, mean , na.rm = TRUE )
+
+# fit.train.0 %>% select( .id, orgUnit, fourier1 ) 
+# fit.train.0 %>% select( .id, orgUnit, arima ) 
+
+fore.train.0  = fit.train.0 %>%  forecast( h = '1 year' )
+
+fore.train.0 %>% accuracy( datasetTS.0 )
+
+# Residual accuracy ? 
+# datasetTS.0 %>% model(RW( confCases ~ drift())) %>% accuracy()
+
+```
+
+ 
+We selected 5 years of data for several variables of confirmed cases and potentially explanatory variables, icluding attendance.  (describe, zeros?)  
+ 
+
+# first pass, modeling level 4 - at least 4 years data  
+
+```{r train4}
+# trainin set
+train.4 = datasetTS %>% 
+  filter( 
+    # month < yearmonth( "2018-Dec" ) ,
+    orgUnit %in% noMissing.confCases  
+    ) %>% 
+  select( orgUnit, month, confCases ) %>% 
+  fill_gaps()
+
+ou = train.4$orgUnit %>% unique()
+
+```
+
+```{r time-series-features}
+
+i = which( ou =='AcMkv28WWEO' )
+## How to decipher wihich have a model???
+i = 100:200
+
+# select by ou id
+# i = which( ou %in% 'asiPyqS8rHs')
+if ( i < 6 ){
+    train.4 %>% filter( orgUnit == ou[i] ) %>% autoplot(confCases) +
+  # labs( title = i ) + 
+  guides( color = FALSE )
+}
+
+# time-series features
+f = map_df( i , ~ train.4 %>% 
+                filter( orgUnit == ou[.x] ) %>%
+                features( confCases, 
+                          features = list( 
+                              mean = ~ mean(., na.rm = TRUE) ,
+                              sd = ~ var(., na.rm = TRUE)^.5, 
+                              # ndiffs, nsdiffs ,
+                              feat_stl 
+                              # , feature_set(pkgs = 'feasts') 
+                             ) , 
+                          s.window =  12 ) %>%
+         mutate( sd / mean )
+  ) 
+  
+  # View( f )
+ 
+# stl features
+#  this fails...
+# train.4 %>% filter( orgUnit == ou[i] ) %>%
+#   features( confCases, feat_stl, s.window = 'periodic' )
+ 
+```
+
+```{r decomp_functions}
+  # get remainder formn stl 
+  decomp_method = function( .mable ){
+      
+      modelCols = setdiff( colnames( .mable ) , key( .mable ) )
+   
+      # m = map( 1:length(models) , 
+      #             ~ maple %>%
+      #             pull( !! models[ .x ] ) %>% 
+      #             map( 'fit' )  %>% 
+      #             map( 'method' ) %>% unlist() 
+      # ) 
+      
+      model = .mable[, modelCols[.x] ]
+      
+      map_chr( 1:length(models) , 
+               
+               ~.mable[, models[.x] ] %>% map( 1 ) %>%
+                   map( 'fit' )  %>% 
+                   map( class ) %>% unlist
+              
+           )
+  
+  }
+  
+  has_remainder = function( .mable ){
+
+      ifelse( 
+         any( 
+         grepl('stl', decomp_method( .mable ) , 
+               ignore.case = TRUE ) 
+          ) 
+      ,
+              TRUE ,
+              FALSE
+      )
+  }
+  
+  
+  decomp_remainder = function( .mable ){
+    if ( has_remainder( .mable ) ){
+      .mable %>%
+      pull( stl ) %>% 
+      map( 'fit' )  %>% 
+      map( 'decomposition' ) %>% 
+        map( 'remainder' ) %>% 
+        unlist()
+    } else { NA }
+  }
+  
+```
+
+
+```{r train4.fit}
+
+i = which( ou =='AlGl0pjBwFS' )
+## How to decipher wihich have a model???
+i = 1:length( ou )
+
+if ( length( i ) < 6 ){
+   train.4  %>%
+    filter( orgUnit %in% ou[i] ) %>% autoplot()
+}
+
+
+fit.train.4 = train.4 %>%
+  filter( orgUnit %in% ou[i] ) %>%
+    model( 
+          ets = ETS( log(confCases + 1)  ) ,
+          # ets = ETS( confCases  ) ,
+          stl = STL( log(confCases + 1) ~ 
+                       season( window = 'periodic' ) + 
+                       trend( window = 13 ) ) ,
+          # stl.b = STL( log(confCases) ) ,
+          # etsadj = ETS( log(confCases)  ~ trend("Ad") ) ,
+          arima = ARIMA( log(confCases + 1) ) ,
+          fourier1 = ARIMA( log(confCases + 1) ~ fourier( K = 1 ) + PDQ(0,0,0))
+           ) 
+
+
+# SD of Remainder
+rsd = map( i , ~fit.train.4  %>% 
+               filter( orgUnit %in% ou[ .x ] ) %>% 
+                 summarise( 
+                     sd_remainder = var( decomp_remainder(.) ,
+                                         na.rm = TRUE )^.5 , 
+                     orgUnit = orgUnit
+            )
+        ) %>% bind_rows()
+
+summary( rsd$sd_remainder )
+
+# ou with highest remainder...
+orgUnit.max.resid = rsd %>% arrange( desc( sd_remainder ) ) %>% 
+    head(1) %>% pull( orgUnit )
+
+    train.4 %>% filter( orgUnit %in% orgUnit.max.resid ) %>% 
+        autoplot( confCases )
+
+# ou with highest remainder...
+orgUnit.min.resid =  rsd %>% arrange( sd_remainder ) %>% 
+    head(1) %>% pull( orgUnit )
+
+    train.4 %>% filter( orgUnit %in% orgUnit.min.resid ) %>% 
+            autoplot( confCases )
+
+# decomp method
+dm = map( i , ~fit.train.4  %>% 
+               filter( orgUnit %in% ou[ .x ] ) %>% 
+                 summarise( 
+                     method = decomp_method(.) %>%
+                         paste( . , collapse = ", "), 
+                     orgUnit = orgUnit
+            )
+        ) %>% bind_rows()
+
+dm 
+```
+
+```{r, train4.fit2}
+
+# residual SD (from ETS -- try getting from other models...)
+fit.train.4  %>% 
+  filter( orgUnit %in% ou[i] ) %>%
+  select( orgUnit , stl, stl.b ) %>%
+  # arrange( orgUnit ) %>%
+  components(  ) %>%
+  as.tibble() %>% 
+  group_by( orgUnit , .model ) %>% 
+  dplyr::summarize( 
+    n = n() ,
+    mean = mean( remainder , na.rm = TRUE )  ,
+    sd = var( remainder , na.rm = TRUE )^.5
+    )
+
+fit.train.4  %>% filter( orgUnit == ou[i] ) %>% 
+  select( orgUnit , ets ) %>% augment()
+
+  components(  ) %>% autoplot() 
+```
+
+```{r model_failed}
+
+fail = fit.train.4  %>% 
+  augment() %>% as.tibble() %>%
+  group_by( .model , orgUnit ) %>%
+  summarise( mean = mean( .fitted ) ) 
+
+fail %>%
+  summarise( n = n() , 
+             fail = sum( is.na( mean ) ) 
+             )
+
+train.4 %>% as.tibble() %>%
+  group_by( orgUnit ) %>%
+  summarise( n = n() ,
+             value = sum( !is.na( confCases ) )
+             )
+
+datasetTS %>% filter( orgUnit %in% 'a6SFNf7F567' )
+
+```
+
+
+```{r forecast4}
+
+
+# fit.train.4 %>% unnest(fourier1 )
+
+# fit.train.4 %>% count( fourier1$fit )
+
+fit.train.4 %>% accuracy()
+
+fore.train.4 = fit.train.4 %>%  forecast( h = '13 months' )
+
+fore.train.4 %>% accuracy( datasetTS )
+```
+
+
+# Impute data . ####
+
+
+```{r train4_interpolate}
+
+# trainin set
+datasetTS.itp = datasetTS %>% 
+  fill_gaps() %>%
+  group_by( orgUnit ) %>% 
+  model( ARIMA( log(confCases) ) 
+         )  %>%
+  interpolate( datasetTS )
+
+ous = unique( datasetTS$orgUnit )
+
+ous_rows = map_dbl( ous, ~datasetTS %>% 
+                       filter( orgUnit %in% .x ) %>%
+                       nrow()
+)
+
+fit0.arima = fit0 %>% select( orgUnit, arima )
+
+datasetTS.itp = map( ous[1:5], ~datasetTS %>% 
+                       filter( orgUnit %in% .x ) %>%
+                       refit( fit0.arima , . )
+)
+  
+fill_gaps() %>%
+  group_by( orgUnit ) %>% 
+  model( ARIMA( log(confCases) ) 
+         )  %>%
+  interpolate( datasetTS )
+
+
+train.4.int = datasetTS.itp %>% 
+  filter( month < yearmonth( "2018-Dec" ) ) 
+
+fit.train.4.int = train.4.int %>% 
+    model( 
+          etsadj = ETS( log(confCases)  ~ trend("Ad") ) ,
+          fourier1 = ARIMA( log(confCases) ~ fourier(K = 1) + PDQ(0,0,0)) 
+           ) 
+
+ou = fit.train.4$orgUnit 
+
+## How to decipher wihich have a model???
+
+fit.train.4.int  %>% filter( orgUnit == ou[5] ) %>% 
+  select( orgUnit , etsadj ) %>% 
+  components( fit.train.4 ) %>% autoplot()
+
+```
+
+Model fit characteristics including characteristics of model, seasonal fit.  
+ ETS, ARIMA., Fourier, Explanatory with ARIMA.  
+ 
+ We evaluated impacted by 
+ 
+ 1. simulating a before-after cross-sectional study, choosing one month preceding and one month following bednet distribution.
+ 
+ 2. Using time-series models to forecast counterfactual data and compare with actual data.  Facilities were ranked by percent difference. The effect of bednets was estimated by conducting rank-sum test comparing facilites with new nets to those without.  
