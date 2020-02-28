@@ -133,7 +133,11 @@ d = datasetTS %>%
   select( orgUnit, month, confCases ) %>%
   as_tibble() %>%
   group_by( orgUnit ) %>%
-  mutate( confCases.scaled = scale( confCases ) ) %>%
+  mutate_at( vars( confCases ) ,  
+              list( confCases.scaled = ~  ifelse( row_number() == 1 | .x == 0 , 0, 
+                                                  (.x - first(.x)) / first(.x) ) ,
+                    confCases.logDiff = ~ log( .x ) - log( first(.x) )) 
+             ) %>%
   as_tibble() 
 
 g = d %>%
@@ -146,7 +150,7 @@ g %>% plotly::ggplotly()
 
 g.scaled = d %>%
   ggplot() +
-  geom_line( aes( x = month , y = confCases.scaled ,  
+  geom_line( aes( x = month , y = confCases.logDiff ,  
                   group = orgUnit) , alpha = .05 
              )  
 
@@ -233,7 +237,7 @@ national_annual %>%
 
   datasetTS.0 %>% 
        autoplot( confCases   ) +
-       labs( title = .x ) +
+       labs( title = 'confCases' ) +
        guides( color = FALSE ) +
        theme_bw( base_size = 10 )
 
@@ -245,32 +249,93 @@ national_annual %>%
 
 ```{r national_monthly_confirmed_cases_counts}
 
-datasetTS.0.n =  datasetTS %>% 
-   summarise_if( is.integer , ~sum(!is.na(.x))  ) %>%
-   mutate( orgUnit = 'O' , orgUnitName = 'National' ) 
+cols = setdiff( names( datasetTS.0 ) , c( 'month' , 'orgUnit' , 'orgUnitName', 'var' ))
 
 
-bind_rows( 
-  datasetTS.0.n %>% mutate( var = 'Count' ) %>% as_tibble() ,
-  datasetTS.0 %>% mutate( var = 'Sum' ) %>% as_tibble()
-                        ) %>% 
-    
-       as_tsibble( index = month, key = c( var, orgUnit, orgUnitName ) ) %>%
-       autoplot( confCases   ) +
-       facet_grid( var  ~ . , 
-                   scale = 'free_y' ) +
+datasetTS.0.sum_count.monthly = 
+  inner_join( 
+  datasetTS.0.n %>% rename_at( vars(cols), ~ paste0(., "_count") ) , 
+  datasetTS.0 , 
+  by = c('month' , 'orgUnit', 'orgUnitName' )
+  ) %>% 
+  # mutate_if( is.numeric , scale ) %>%
+  mutate(  year = year( month )  ) %>% 
+  
+  as_tibble() %>% 
+  select(  month , year , orgUnit , starts_with( 'confCases' ) )   %>% 
+  group_by( month , orgUnit = 'National' ) %>%
+  summarise_if( is.numeric , sum ) %>%
+  
+  as_tsibble( index = month , key = orgUnit ) 
+
+datasetTS.0.sum_count.monthly = 
+  inner_join( 
+  datasetTS.0.n %>% rename_at( vars(cols), ~ paste0(., "_count") ) , 
+  datasetTS.0 , 
+  by = c('month' , 'orgUnit', 'orgUnitName' )
+  ) %>% 
+  # select( month , orgUnit , starts_with( 'confCases' ) )   %>% 
+  as_tibble() %>%
+  group_by( month  ) %>%
+  summarise_if( is.numeric , sum ) %>% 
+  ungroup %>% 
+  mutate_at( vars(-month ) , 
+            ~ log( .x ) - log( first(.x) ) 
+             ) %>%
+  mutate( orgUnit = 'National' ) %>%
+  
+  as_tsibble( index = month  , key = orgUnit ) 
+
+datasetTS.0.sum_count.monthly %>% 
+       autoplot() +
        labs( title = .x ) +
        guides( color = FALSE ) +
        theme_bw( base_size = 10 )
 
 
+datasetTS.0.sum_count.monthly  %>%
+  ts_xts() %>%
+  dygraphs::dygraph( . ) %>%
+  dyEvent("2018-11-15", "Net Campaign", 
+          labelLoc = "top") %>%
+  dyHighlight(
+    highlightSeriesOpts = list(strokeWidth = 5)
+    ) %>% 
+  dyLegend(show = "follow") %>%
+  dyCSS(textConnection("
+     .dygraph-legend > span { display: none; }
+     .dygraph-legend > span.highlight { display: inline; }
+  "))
+
+
 ```
 
-```{r annualized_scaled }
-# scaled
-national_annual %>%
-  mutate_at( cols , scale) %>%
-  select(  year, confCases ) %>%
+```{r annualized_scaled_confCases }
+
+
+datasetTS.0.sum_count.annual = 
+  inner_join( 
+  datasetTS.0.n %>% rename_at( vars(cols), ~ paste0(., "_count") ) , 
+  datasetTS.0 , 
+  by = c('month' , 'orgUnit', 'orgUnitName' )
+  ) %>% 
+  # mutate_if( is.numeric , scale ) %>%
+  mutate(  year = year( month )  ) %>% 
+  
+  as_tibble() %>% 
+  select( year , orgUnit , starts_with( 'confCases' ) )   %>% 
+  group_by( year , orgUnit = 'National' ) %>%
+  summarise_if( is.numeric , sum ) %>% 
+  ungroup %>% 
+    ungroup %>%
+  mutate_at( vars(-year, -orgUnit) , 
+            ~ log( .x ) - log( first(.x) )
+             ) %>%
+  
+  as_tsibble( index = year  , key = orgUnit ) 
+
+
+datasetTS.0.sum_count.annual  %>%
   ts_xts() %>%
   dygraphs::dygraph( . ) %>%
   dyEvent("2018-11-15", "Net Campaign", 
@@ -284,6 +349,55 @@ national_annual %>%
      .dygraph-legend > span.highlight { display: inline; }
   "))
 ```
+
+
+```{r datasetTS.0.sum_count_adjusted }
+maxn = max( datasetTS.0.sum_count$confCases_count )
+
+datasetTS.0.sum_count %>% 
+  ungroup %>% 
+  mutate( 
+    adj.n = maxn / confCases_count  , 
+    adj =  confCases * adj.n  ) %>%
+  select( orgUnit, year, confCases , adj ) %>%
+  # mutate_at( vars(-year, -orgUnit) , scale ) %>%
+  ts_xts() %>%
+  dygraphs::dygraph( . ) %>%
+  dyEvent("2018-11-15", "Net Campaign", 
+          labelLoc = "top") %>%
+  dyHighlight(
+    highlightSeriesOpts = list(strokeWidth = 5)
+    ) %>% 
+  dyLegend(show = "follow") %>%
+  dyCSS(textConnection("
+     .dygraph-legend > span { display: none; }
+     .dygraph-legend > span.highlight { display: inline; }
+  "))
+```
+
+
+```{r annualized_scaled }
+
+cols = setdiff( names( datasetTS.0 ) , c( 'month' , 'orgUnit' , 'orgUnitName'))
+
+# scaled
+national_annual %>%
+  mutate_at( cols , ~ log( .x ) - log( first(.x) ) ) %>%
+  # select(  year, confCases ) %>%
+  ts_xts() %>%
+  dygraphs::dygraph( . ) %>%
+  dyEvent("2018-11-15", "Net Campaign", 
+          labelLoc = "top") %>%
+  dyHighlight(
+    highlightSeriesOpts = list(strokeWidth = 5)
+    ) %>% 
+  dyLegend(show = "follow") %>%
+  dyCSS(textConnection("
+     .dygraph-legend > span { display: none; }
+     .dygraph-legend > span.highlight { display: inline; }
+  "))
+```
+
 
 ## Seaonality of data
 
@@ -342,7 +456,8 @@ map( cols , ~bind_rows(
                         )  %>% 
        as_tsibble( index = month, key = c( var, orgUnit, orgUnitName ) ) %>%
        autoplot( vars( !!.x )   ) +
-       facet_grid( var  ~ . ,scale = 'free_y' ) +
+       facet_grid( var  ~ . , scale = 'free_y' ) +
+       expand_limits( y = 0 ) +
        labs( title = .x ) +
        guides( color = FALSE ) +
        theme_bw( base_size = 10 )
@@ -552,7 +667,8 @@ train.0.cross = datasetTS.0 %>%
     slide_tsibble( .size = 36 , .step = 1 )
 
 
-fit.train.0.cross = train.0.cross %>% 
+fit.train.0.cross = train.0.cross %>% model( model_list )
+
     model( 
 
           ets_log = ETS( log(confCases + 1)  ) ,
@@ -724,6 +840,7 @@ For 2 of three models, the actual is within the 80% credible prediction interval
 
 ```{r confCases_crude_adjust}
 
+ 
  max.confCases.n = datasetTS.0.n %>% pull( confCases ) %>% max(. , na.rm = TRUE )
 
 datasetTS.0.adj = datasetTS.0 %>% 
@@ -763,12 +880,18 @@ saveRDS( ous , file = 'malawi_ous.rda')
 ```
 
 
-```{r districts}
+```{r districts }
 ous = readRDS( 'malawi_ous.rds' )
 
 districts = ous %>% filter( level ==3 ) %>%
   mutate( district = orgUnit.name ,
           district.id = orgUnit )
+
+region_district = districts %>%
+  select( orgUnit.name, parent_ou.name, district) %>%
+  arrange( parent_ou.name, district ) 
+
+# View( region_district )
 
 datasetTS.3 = datasetTS %>% 
   left_join( ous %>% select( orgUnit, parent_ou ) ,
@@ -781,17 +904,38 @@ datasetTS.3 = datasetTS %>%
   group_by( district ) %>%
   summarise_if( is.integer , sum , na.rm = TRUE ) 
 
+
+```
+
+
+```{r district_absolute}
+
 datasetTS.3 %>% autoplot( confCases  ) %>%
   plotly::ggplotly()
 
 
+```
+
+Lilongwe district is greatest contributor to number of confirmed cases 
+
+```{r district_percent_total}
+
+# examine contribution to the total each month 
 
 datasetTS.3 %>% 
-  group_by( district ) %>%
-  mutate( confCases.scaled = scale( confCases ) ) %>%
-  # autoplot( confCases.scaled   ) %>%
-  select( district , month, confCases.scaled ) %>%
-  ts_xts() %>%
+  pivot_longer( !matches( c('month', 'district') ) , names_to = 'var' , values_to = 'val' ) %>% 
+  group_by( month , var ) %>% 
+  mutate( total = sum( val, na.rm = TRUE )) %>%
+  group_by( month, var ,district ) %>%
+  mutate( pct = val / total ) %>%
+  select( - total , -val ) %>%
+  pivot_wider( names_from = 'var' , values_from = 'pct') %>% 
+  as_tsibble( index = month , key = district ) %>%
+  
+  # Facility RDT
+  select( month, district , contains('RDT') & contains('NMCP') ) %>%
+  
+  ts_xts( ) %>%
   dygraphs::dygraph( . ) %>%
   dyEvent("2018-11-15", "Net Campaign", 
           labelLoc = "top") %>%
@@ -806,8 +950,39 @@ datasetTS.3 %>%
   
 
 
+```
+
+Lilongwe district acounts for 5-20% of cases each month.  3 districts acount for 30% each month (Lilongwe , Mangochi, Kasungu )
+
+
+
+```{r district_scaled }
+
+datasetTS.3 %>% 
+  group_by( district  ) %>%
+  mutate( confCases.scaled = scale( confCases ) ,
+          confCases.logDiff = log( confCases) - log( first(confCases) ) ) %>%
+  # autoplot( confCases.scaled   ) %>%
+  select( district , month, confCases.logDiff ) %>%
+  ts_xts() %>%
+  dygraphs::dygraph( . ) %>%
+  dyEvent("2018-11-15", "Net Campaign", 
+          labelLoc = "top") %>%
+  dyHighlight(
+    highlightSeriesOpts = list(strokeWidth = 5)
+    ) %>% 
+  dyLegend(show = "follow") %>%
+  dyCSS(textConnection("
+     .dygraph-legend > span { display: none; }
+     .dygraph-legend > span.highlight { display: inline; }
+  "))
 
 ```
+
+When scaled,Mwanza Feb 2017 is 5 SD, whereas other series have no values >3sd 
+
+When log difference, Chiradzulu has greatest change, ~ 3x
+
 
 ## Annualized cases
 
@@ -1026,7 +1201,8 @@ cat( 'The greatest number of confCases submissions in any one month was' ,
 ```
 
 
-## Impact, aggregated data, national level.  Naive, or crude, model assumes things that probably should not be assumed without good evidence.  
+## Model
+Impact, aggregated data, national level.  Naive, or crude, model assumes things that probably should not be assumed without good evidence.  
 
 ```{r district_aggregated_features, eval = FALSE}
 
