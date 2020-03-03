@@ -73,10 +73,20 @@ confCases = read_excel( paste0( folder, confCases.file ) , "summaryData") %>%
   select( orgUnit, orgUnitName , period, confCases)
 
 stockout = read_excel( paste0( folder, stockout.file ) , "formulaData")
+
 attendance = read_excel( paste0( folder, attendance.file ) , "formulaData")
 
-# Rainfall
+# rainfall
+rain = readRDS( 'malawi_arc.rds' ) 
+  # mutate( district =  str_split_fixed( orgUnit.name, "-", n=2)[1] ) 
+  # count( rain, orgUnit.name)
+  
+rainTS = rain %>%
+  filter( grepl( 'DHO', orgUnit.name ) ) %>%
+  filter( ) %>%
+  as_tsibble( index = month , key = orgUnit.name )
 
+  # count( rainTS %>% as_tibble, orgUnit.name)
 
 # count( confCases.e , dataElement, Categories )
 
@@ -109,7 +119,12 @@ attendanceW = attendance %>%
 dataset = confCasesW %>% 
     full_join( confCases , by = idCols ) %>%
     full_join( stockoutW , by = idCols ) %>%
-    full_join( attendanceW , by = idCols ) 
+    full_join( attendanceW , by = idCols )    %>%
+  
+  rename( 
+    chdRDTSO7 = `CHD IMCI RDT Number of HSA's Reporting Stock Out Lasting 7 Days or More_default` ,
+    
+   RDTsoDays = `OpenLMIS MAL Malaria Rapid Diagnostic Test (MRDT) Kits Stock out days_default`  ) 
 
 # glimpse( dataset )
 ```
@@ -163,6 +178,7 @@ g.scaled %>% plotly::ggplotly()
 ```{r national_annualized_bar_chart}
 
 datasetTS.0 =  datasetTS %>% 
+  
    summarise_if( is.integer , sum , na.rm = TRUE ) %>%
    mutate( orgUnit = 'O' , orgUnitName = 'National' ) 
 
@@ -239,7 +255,7 @@ national_annual %>%
        autoplot( confCases   ) +
        labs( title = 'confCases' ) +
        guides( color = FALSE ) +
-       theme_bw( base_size = 10 )
+       theme_bw( base_size = 10 ) 
 
 
 ```
@@ -597,17 +613,18 @@ cat( 'The greatest number of confCases submissions in any one month was' ,
 # Transform??? 
 
 datasetTS.0 %>% autoplot( confCases )
+datasetTS.0 %>% autoplot( difference( confCases , 1) )
 datasetTS.0 %>% autoplot( difference( confCases , 2) )
 
 datasetTS.0 %>% autoplot( log( confCases) )
-datasetTS.0 %>% autoplot( difference( log(confCases) , 2) )
+datasetTS.0 %>% autoplot( difference( log(confCases) , 1) )
 
 lambdaG <- datasetTS.0 %>%
   features( confCases , features = guerrero) %>%
   pull(lambda_guerrero)
 
 datasetTS.0 %>% autoplot( box_cox( confCases, lambdaG ) )
-datasetTS.0 %>% autoplot( difference( box_cox( confCases, lambdaG ) , 2) )
+datasetTS.0 %>% autoplot( difference( box_cox( confCases, lambdaG ) , 1) )
 
 # no transformation
 datasetTS.0 %>% 
@@ -652,6 +669,66 @@ datasetTS.0 %>%
 
 ```
 
+## Transformations to reduce heteroscedacity
+
+```{r guerreros}
+# confCases
+datasetTS.0 %>% autoplot( confCases )
+
+  lambdaG.confCases <- datasetTS.0 %>%
+    features( confCases , features = guerrero) %>%
+    pull(lambda_guerrero)
+  
+  datasetTS.0 %>% 
+    mutate( 
+      x = box_cox( confCases , lambda = lambdaG.confCases ) ,
+      diff12 = difference( lag( x , 1) , 12 )  
+      ) %>% 
+    gg_tsdisplay( diff12 , plot_type='partial') +
+    ggtitle( 'lambda guerrero transformation' )
+  
+datasetTS.0 %>% autoplot( difference( 
+  box_cox( confCases , lambda = lambdaG.confCases ) , 1) )
+  
+# chdRDTSO7  
+ datasetTS.0 %>% autoplot( chdRDTSO7 )
+
+  lambdaG.chdRDTSO7 <- datasetTS.0 %>%
+    features( chdRDTSO7 , features = guerrero) %>%
+    pull(lambda_guerrero)
+  
+  datasetTS.0 %>% 
+    mutate( 
+      x = box_cox( chdRDTSO7 , lambda = lambdaG.chdRDTSO7 ) ,
+      diff12 = difference( lag( x , 1) , 12 )  
+      ) %>% 
+    gg_tsdisplay( diff12 , plot_type='partial') +
+    ggtitle( 'lambda guerrero transformation' )
+
+ datasetTS.0 %>% autoplot( difference( 
+  box_cox( chdRDTSO7 , lambda = lambdaG.chdRDTSO7 ) , 1) )
+   
+  # RDTsoDays  
+  datasetTS.0 %>% autoplot( RDTsoDays )
+  
+  lambdaG.RDTsoDays <- datasetTS.0 %>%
+    features( RDTsoDays , features = guerrero) %>%
+    pull(lambda_guerrero)
+  
+  datasetTS.0 %>% 
+    mutate( 
+      x = box_cox( RDTsoDays , lambda = lambdaG.RDTsoDays ) ,
+      diff12 = difference( lag( x , 1) , 12 )  
+      ) %>% 
+    gg_tsdisplay( diff12 , plot_type='partial') +
+    ggtitle( 'lambda guerrero transformation' )
+
+  datasetTS.0 %>% autoplot( difference( 
+  box_cox( RDTsoDays , lambda = lambdaG.RDTsoDays ) , 1) )
+  
+
+```
+
 ## cross-validation (national)
 
 ```{r crossValidation0}
@@ -667,9 +744,7 @@ train.0.cross = datasetTS.0 %>%
     slide_tsibble( .size = 36 , .step = 1 )
 
 
-fit.train.0.cross = train.0.cross %>% model( model_list )
-
-    model( 
+fit.train.0.cross = train.0.cross %>% model( 
 
           ets_log = ETS( log(confCases + 1)  ) ,
           
@@ -746,7 +821,7 @@ save( fc , train.0.cross,
 
 ```
 
- 
+
 We selected 5 years of data for several variables of confirmed cases and potentially explanatory variables, including attendance.  (describe, zeros?)  
  
 
@@ -835,6 +910,170 @@ map( c('ets', 'ets_damped', 'arima' , 'arima_auto' , 'fourier1'  ) ,
 
 For 2 of three models, the actual is within the 80% credible prediction interval.  We need to pay attention to which model is the best fit.  
 
+## Rain 
+
+- for some reason, Likoma is missing rain data 
+
+```{r rainTS}
+
+rainTS %>% autoplot( avg_month ) + guides( color = FALSE )
+
+rainTS.0 = rainTS %>% 
+  summarise_if( is.numeric, sum, na.rm = TRUE ) 
+
+rainTS.district = rain %>%
+  mutate( district = orgUnit.name  ) %>%
+  as_tsibble( key = district , index = month )
+
+AnnualRainNational = rainTS %>% 
+  index_by( Year = ~ year(.) ) %>%
+  summarise_if( is.numeric, sum, na.rm = TRUE ) 
+
+AnnualRainNational %>% 
+  ggplot( aes( x = Year, y = avg_month ) ) +
+  geom_col()
+
+AnnualRainDistrict = rainTS %>% 
+  index_by( Year = ~ year(.) ) %>%
+  group_by( orgUnit.name  ) %>%
+  summarise_if( is.numeric, sum, na.rm = TRUE ) 
+
+
+ard = AnnualRainDistrict %>% 
+  ggplot( aes( x = Year, y = avg_month , 
+               group = orgUnit.name , fill = orgUnit.name ) 
+          ) +
+  geom_line() 
+
+ggplotly( ard )
+```
+
+```{r rain_guerrero}
+
+# avg_monthly  
+  rainTS.0 %>% autoplot( avg_month )
+  
+  lambdaG.avg_month <- rainTS.0 %>%
+    features( avg_month , features = guerrero) %>%
+    pull(lambda_guerrero)
+  
+  rainTS.0 %>% 
+    mutate( 
+      x = box_cox( avg_month , lambda = lambdaG.avg_month ) ,
+      diff12 = difference( lag( x , 1) , 12 )  
+      ) %>% 
+    gg_tsdisplay( diff12 , plot_type='partial') +
+    ggtitle( 'lambda guerrero transformation' )
+
+  rainTS.0 %>% autoplot( difference( 
+  box_cox( avg_month , lambda = lambdaG.avg_month ) , 1) )
+  
+```
+
+
+Rainfall reduced in 2016-2017.  In 2016, rain way down except for northern zone. In 2017, ~50% reduction in all distracts.  
+
+```{r model.0.rain.cross}
+
+datasetTS.0.rain = datasetTS.0 %>%
+
+    select( orgUnit, month, confCases ) %>%
+    left_join( rainTS.0 %>% select( month , avg_month ) 
+               ) 
+
+train.0.rain.cross = datasetTS.0.rain %>%
+    filter(
+        month < yearmonth( "2018-Dec" )
+    ) %>%
+    slide_tsibble( .size = 36 , .step = 1 )
+
+
+fit.0.rain = train.0.rain.cross %>%
+  model( 
+              arima_log = ARIMA( log(confCases + 1) ~ 
+                           pdq(0,1,1) + PDQ(0,1,0)) 
+              
+              , arima_rain = ARIMA( log(confCases + 1) ~
+                                   avg_month )
+    )
+
+# check fit parameters
+map(1:12 , ~fit.0.rain %>% 
+      filter( .id == .x ) %>% select(arima_log) %>% 
+      map(1) # or gg_tsresiduals
+    )
+map(1:12 , ~fit.0.rain %>% 
+      filter( .id == .x ) %>% select(arima_rain) %>% map(1))
+
+
+```
+## National prediction accuracy
+
+```{r model.0.rain.pred}
+
+datasetTS.0.rain = datasetTS.0 %>%
+    select( orgUnit, month, confCases , chdRDTSO7 ,RDTsoDays ) %>%
+    left_join( rainTS.0 %>% select( month , avg_month ) 
+               ) 
+
+train.0.rain = datasetTS.0.rain %>%
+    filter(
+        month < yearmonth( "2018-Dec" )
+    ) 
+
+fit.0.rain = train.0.rain %>%
+  model( 
+              arima_log = ARIMA( log(confCases + 1) ~ 
+                           pdq(0,1,1) + PDQ(0,1,0)) 
+              
+              , arima_rain = ARIMA( log(confCases + 1) ~
+                                      avg_month  +
+                pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1)
+              )
+
+              , arima_log_rain = ARIMA( log(confCases + 1) ~
+                                  log( avg_month +1 ) +
+                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1) 
+              ) 
+              
+              , so_log = ARIMA( log( confCases +1 ) ~ 
+                            log( avg_month +1 ) +
+                        log( chdRDTSO7 +1 ) + 
+                        log( RDTsoDays +1 ) +
+                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1) 
+                        ) 
+    )
+
+
+train.0.rain.test = 
+  datasetTS.0.rain %>%
+  mutate( confCases = ifelse( 
+    month < yearmonth( "2018-Dec" ) ,
+    confCases,  NA )
+  ) %>%
+  filter(  month >= yearmonth( "2018-Dec" ) )
+
+pred.0.rain = fit.0.rain %>%
+  forecast( new_data = train.0.rain.test ) %>%
+  group_by( .model ) %>%
+  mutate( h = row_number() ) %>%
+  ungroup()
+
+pred.0.rain %>% 
+  autoplot( level = NULL ) + 
+  autolayer( datasetTS.0 , confCases ) 
+
+accuracy( pred.0.rain, datasetTS.0.rain )
+
+map( c('arima_log' , 'arima_rain' , 'arima_log_rain' , 
+       'so_log' ) , 
+     ~pred.0.rain %>% 
+       filter( .model %in% .x ) %>%  autoplot() + 
+         autolayer( datasetTS.0.rain , confCases ) +
+         ggtitle( .x )
+)
+
+```
 
 ## Crude reporting adjustment
 
@@ -902,7 +1141,12 @@ datasetTS.3 = datasetTS %>%
   )  %>%
   filter( !is.na( district ) ) %>%
   group_by( district ) %>%
-  summarise_if( is.integer , sum , na.rm = TRUE ) 
+  summarise_if( is.integer , sum , na.rm = TRUE ) %>%
+
+  left_join( rainTS.district %>% 
+               select( month , district , avg_month ) , by = c( 'month' , 'district'  )
+               ) 
+
 
 
 ```
@@ -911,6 +1155,9 @@ datasetTS.3 = datasetTS %>%
 ```{r district_absolute}
 
 datasetTS.3 %>% autoplot( confCases  ) %>%
+  plotly::ggplotly()
+
+datasetTS.3 %>% autoplot( avg_month  ) %>%
   plotly::ggplotly()
 
 
@@ -1216,7 +1463,7 @@ datasetTS.3 %>% gg_subseries( confCases)
 datasetTS.3 %>% gg_lag 
 
 datasetTS.3 %>% autoplot( log( confCases) )
-datasetTS.3 %>% autoplot( difference( log(confCases) , 2) )
+datasetTS.3 %>% autoplot( difference( log(confCases) , 1) )
 
 datasetTS.3 %>% 
   mutate( diffl2 = difference( lag(confCases, 1) , 12 )  ) %>% 
@@ -1236,21 +1483,32 @@ datasetTS.3 %>%
  # whole data set
 fit3 = datasetTS.3 %>% 
     fill_gaps() %>%
-    select( district, month, confCases ) %>%
+    select( district, month, confCases , avg_month ) %>%
     model( 
       ets = ETS(  log( confCases + 1) ) ,
       ets.damped = ETS( confCases ~ trend("Ad") ) ,
       arima = ARIMA( log( confCases +1 ) ) ,
-      fourier = ARIMA( log( confCases + 1) ~ fourier(K = 1) + PDQ(0,0,0))
+      fourier = ARIMA( log( confCases + 1) ~ fourier(K = 1) + PDQ(0,0,0)) ,
+      rain = ARIMA( log( confCases +1 ) ~ avg_month ) 
                                  )
 
+# fit3 %>% pull( rain ) %>% map(1)
 # plot fiited values 
 
 fit3 %>% 
   # select( - stl ) %>%
   augment() %>% 
   autoplot(.fitted) +
-  autolayer( datasetTS.3, confCases, color = 'black', alpha = .5  )
+  autolayer( datasetTS.3, confCases, color = 'black', alpha = .5  ) + guides( color = FALSE )
+
+map( districts$orgUnit.name[9:18] , ~fit3 %>% 
+       filter( district %in% .x ) %>%
+  # select( - stl ) %>%
+  augment() %>% 
+  autoplot(.fitted) +
+  autolayer( datasetTS.3 %>% filter( district %in% .x ) ,
+             confCases, color = 'black', alpha = 1  ) 
+       )
 
 # fit3 %>% accuracy( )
 
@@ -1259,51 +1517,139 @@ fit3 %>%
 
 Models for ETS and ARIMA run only when pre-conditioning data with log.  Is there a better conditioning factor? 
 
+## District Leave Out 
+
 ```{r district_aggregated_model_leave_out}
 
-# trainin set
-train.3 = datasetTS.3 %>% 
+# training set
+train.3.lo = datasetTS.3 %>% 
+  rename( 
+    chdRDTSO7 = `CHD IMCI RDT Number of HSA's Reporting Stock Out Lasting 7 Days or More_default` ,
+    
+   RDTsoDays = `OpenLMIS MAL Malaria Rapid Diagnostic Test (MRDT) Kits Stock out days_default`  ) %>%
+  
   filter( month < yearmonth( "2018-Dec" )  ) %>%
-    select( district, month, confCases ) %>% 
+    select( district, month, confCases , avg_month ,
+            chdRDTSO7 , RDTsoDays ) %>% 
     fill_gaps()
 
-fit.train.3 = train.3  %>%
-    model( 
-      ets = ETS(  log( confCases + 1) ) ,
-      ets.damped = ETS( confCases ~ trend("Ad") ) ,
-      arima = ARIMA( log( confCases +1 ) ) ,
-      fourier = ARIMA( log( confCases + 1) ~ fourier(K = 1) + PDQ(0,0,0))
-                                 )
+districtsWithRainData = count( rainTS.district %>% as_tibble %>% ungroup , district )
+
+fit.train.3.lo = train.3.lo  %>%
+   filter( !district %in% 'Likoma-DHO' ) %>%
+   model(
+
+          ets = ETS( log(confCases + 1)  ) ,
+          
+          ets_damped = ETS( log(confCases + 1)  ~
+                              trend("Md") ,
+                            restrict = FALSE ) ,
+
+          arima_log = ARIMA( log(confCases + 1) ~
+                           pdq(0,1,1) + PDQ(0,1,0)) ,
+ 
+          arima_auto_log = ARIMA( log(confCases + 1) ~
+                           pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1)
+                           ) ,
+
+          fourier1_log = ARIMA( log(confCases + 1) ~
+                              fourier( K = 1 ) +
+                              pdq(0:1,0:1,0:1) + PDQ(0,0,0)
+                            ) ,
+
+          rain = ARIMA( log( confCases +1 ) ~ 
+                          log( avg_month +1 ) +
+                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1) 
+                        ) ,
+          
+          so_log = ARIMA( log( confCases +1 ) ~ 
+                            log( avg_month +1 ) +
+                        log( chdRDTSO7 +1 ) + 
+                        log( RDTsoDays +1 ) +
+                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1) 
+                        ) 
+   )
 
 # fit.train.0 %>% components() %>% autoplot( season_adjust )
 
-fit.train.3 %>% accuracy()
+fit.train.3.lo.accuracy =
+  fit.train.3.lo %>% accuracy() %>% 
+  select( district , .model , RMSE, MAPE, MASE ) %>%
+  arrange( district , MASE ) 
 
+# View( fit.train.3.lo.accuracy )
 # fit.train.3 %>% features( confCases )
 
-# report( fit.train.3 )
-
-# forecast 
-fore3 = fit.train.3 %>% 
-    # select( orgUnit, ets )  %>% 
-    forecast( h = '13 months' )
-
-# fore3 %>% autoplot( level = NULL ) + 
-#   autolayer( datasetTS.3 , confCases ) +
-#   guides( color = FALSE )
-
-accuracy( fore3, datasetTS.3 )
-
-map( c('ets', 'ets.damped' , 'arima' , 'fourier') , 
-     ~fore3 %>% filter( .model %in% .x ) %>%  
-       autoplot() + 
-       autolayer( datasetTS.3 , confCases ) +
-       ggtitle( .x )
+# Ranks
+map( 
+  c('RMSE', 'MAPE', 'MASE' ) , 
+  ~ fit.train.3.lo.accuracy %>% 
+  group_by( district ) %>%
+  arrange_( "district" , .x ) %>%
+  mutate( rank = row_number() ) %>%
+  ggplot() + geom_histogram( aes(rank) ) +
+  facet_wrap(~.model ) + labs( title = .x )
 )
+ 
+# report( fit.train.3 )
 
 
 ```
 
+## District Leave out prediction accuracy 
+
+```{r district_leave_out_pred_acccuracy }
+
+# forecast 
+train.3.test = 
+  datasetTS.3 %>% 
+  rename( 
+    chdRDTSO7 = `CHD IMCI RDT Number of HSA's Reporting Stock Out Lasting 7 Days or More_default` ,
+    
+   RDTsoDays = `OpenLMIS MAL Malaria Rapid Diagnostic Test (MRDT) Kits Stock out days_default`  )  %>%
+  
+  mutate( confCases = ifelse( 
+    month < yearmonth( "2018-Dec" ) ,
+    confCases,  NA )
+  ) %>%
+  filter(  month >= yearmonth( "2018-Dec" ) )
+
+
+# fore3.lo = fit.train.3.lo %>% 
+#     select( -ets_damped )  %>% 
+#     forecast( new_data = train.3.test  )
+
+### FORECAST FAILS for districts 16 and 17 
+### "Mzimba-North-DHO" "Mzimba-South-DHO"
+pred.3  = fit.train.3.lo[ c(1:15, 18:28) ,] %>%
+  select( district, ets , arima_log , rain , so_log) %>%
+  forecast( new_data = train.3.test ) %>%
+  group_by( .model ) %>%
+  mutate( h = row_number() ) %>%
+  ungroup()
+
+ # accuracy( fore3.lo, datasetTS.3 )
+
+pred.3 %>% 
+  autoplot( level = NULL ) + 
+  autolayer( datasetTS.3 , confCases ) +
+  facet_wrap( ~ district , scales = 'free' )
+
+accuracy( pred.3, datasetTS.3 ) %>%
+  group_by( .model ) %>%
+  summarise_if( is.numeric, mean , na.rm = TRUE ) 
+
+models = c('ets' , 'arima_log' , 
+           'rain' ,  'so_log'  )
+map( 'so_log' , 
+     ~pred.3 %>% filter( .model %in% .x ) %>%  
+       autoplot() + 
+       autolayer( datasetTS.3 , confCases ) +
+       ggtitle( .x ) +
+       facet_wrap( ~ district , scales = 'free' ) 
+)
+
+```
 
 
 ## cross-validation (district)
@@ -1311,18 +1657,19 @@ map( c('ets', 'ets.damped' , 'arima' , 'fourier') ,
 ```{r crossValidation3_model}
 
 train.3.cross = datasetTS.3 %>%
-    select( district, month, confCases ) %>%
+    select( district, month, confCases , avg_month ) %>%
     stretch_tsibble(.init = 3, .step = 1)
 
 
 fit.train.3 = train.3.cross %>% 
     model( 
-      # rw = RW( confCases  ~ drift()) ,
-           ets = ETS( log(confCases + 1 )  ) ,
-           # etsadj = ETS( log(confCases + 1 )  ~ trend("Ad") ) ,
-           # fourier1 = ARIMA( log(confCases + 1) ~ fourier(K = 1) + PDQ(0,0,0)) ,
-           # arima = ARIMA( log( log(confCases + 1) ) )
-           ) 
+      ets = ETS(  log( confCases + 1) ) ,
+      ets.damped = ETS( confCases ~ trend("Ad") ) ,
+      arima = ARIMA( log( confCases +1 ) ) ,
+      fourier = ARIMA( log( confCases + 1) ~ fourier(K = 1) + PDQ(0,0,0) ) ,
+
+      rain = ARIMA( log( confCases +1 ) ~ avg_month ) 
+                                 )
 
 ```
 
@@ -1831,6 +2178,31 @@ summary( dts.features$high )
 
 dts.high = dts.features %>% filter( max>5000 ) 
 
+# Plot facilities that have one of the high values
+datasetTS %>% 
+  semi_join( dts.high , 
+             by = c("orgUnit", "orgUnitName") ) %>%
+autoplot( confCases )
+```
+
+```{r features_max_scaled }
+
+sum_na = function(x ) sum(!is.na(x))
+
+dts.features.scaled = datasetTS %>% 
+  features( scale( confCases ) , 
+           c( n_obs = sum_na , feat_five_num ) 
+           ) %>%
+  
+  mutate( high = ifelse( !is.na(med), abs( max / med ), NA) ) %>%
+  arrange( - high )
+
+summary( dts.features.scaled$max )
+summary( dts.features.scaled$high )
+
+dts.high.scaled = dts.features.scaled %>% filter( max>5000 ) 
+
+# Plot facilities that have one of the high values
 datasetTS %>% 
   semi_join( dts.high , 
              by = c("orgUnit", "orgUnitName") ) %>%
@@ -1947,12 +2319,22 @@ datasetTS.models = datasetTS %>%
     model( 
     fourier1 = ARIMA( log(confCases + 1) ~ 
                               fourier( K = 1 ) + PDQ(0,0,0))
+    
+    , so_log = ARIMA( log( confCases +1 ) ~ 
+                            log( avg_month +1 ) +
+                        log( chdRDTSO7 +1 ) + 
+                        log( RDTsoDays +1 ) +
+                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1) 
+                        ) 
     ) 
 
-model = map_chr( 1:length(ous) , 
+model.fourier1 = map_chr( 1:length(ous) , 
                  ~datasetTS.models[.x,]$fourier1[[1]]$fit %>% class )
 
-table( model )
+model.so_log = map_chr( 1:length(ous) , 
+                 ~datasetTS.models[.x,]$so_log[[1]]$fit %>% class )
+
+table( model.fourier1 )
 has_model = model %in% 'ARIMA' 
 
 itp = datasetTS.models %>%
