@@ -44,8 +44,6 @@ library( tidyverse)
 library( scales )
 ```
 
-# Declining Confirmed Malaria Cases among children <5, Malawi, 2019
- 
 ## data
  
  !Re-download formulas -- should have all elements from all formulas ...
@@ -59,7 +57,7 @@ formulas.file = 'Malawi_Formulas_2020-01-28.xlsx'
 formulas = read_excel( paste0( folder, formulas.file ) , "Formula Elements")
 
 
-confCases.file = enc2utf8('Malawi_confirmed cases _5yrs opd and chw_2020-01-28.xlsx')
+confCases.file = enc2utf8('Malawi_confirmed cases ipd, opd, and chw_2020-02-29.xlsx')
 stockout.file = 'Malawi_RDT Stock outs_2020-01-28.xlsx'
 attendance.file = 'Malawi_OPD Attendance_2020-01-27.xlsx'
 
@@ -80,13 +78,13 @@ attendance = read_excel( paste0( folder, attendance.file ) , "formulaData")
 rain = readRDS( 'malawi_arc.rds' ) 
   # mutate( district =  str_split_fixed( orgUnit.name, "-", n=2)[1] ) 
   # count( rain, orgUnit.name)
-  
-rainTS = rain %>%
-  filter( grepl( 'DHO', orgUnit.name ) ) %>%
-  filter( ) %>%
-  as_tsibble( index = month , key = orgUnit.name )
 
-  # count( rainTS %>% as_tibble, orgUnit.name)
+metadata.file = 'malawi_metaData_2020-03-04.xlsx'
+orgUnits = read_excel( 
+  paste0( folder, metadata.file )  , 'OrgUnits'  ) 
+
+orgUnitLevels = read_excel(
+  paste0( folder, metadata.file )  , 'OrgUnitLevels'  ) 
 
 # count( confCases.e , dataElement, Categories )
 
@@ -103,15 +101,15 @@ valueCols = 'SUM'
 
 confCasesW = confCases.e %>% 
     mutate( SUM = as.integer( SUM ) ) %>%
-    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = valueCols )
+    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = all_of(valueCols)  )
 
 stockoutW = stockout %>% 
     mutate( SUM = as.integer( SUM ) ) %>%
-    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = valueCols )
+    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = all_of(valueCols)  )
 
 attendanceW = attendance %>% 
     mutate( SUM = as.integer( SUM ) ) %>%
-    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = valueCols )
+    pivot_wider( all_of(idCols) , names_from = nameCols , values_from = all_of(valueCols)  )
 
 
 # colnames( confCases )
@@ -128,7 +126,33 @@ dataset = confCasesW %>%
 
 # glimpse( dataset )
 ```
+
  - 41,000 observations of 10 variables identified by facility (orgUnit) and month (period)
+ 
+ ## Districts
+
+```{r districts }
+
+ous = orgUnits %>%
+  left_join( orgUnits %>% 
+               select( id , name ) %>%
+               rename( parent = id , parentName = name ) , 
+             by = c('parent')
+             )
+
+districtOU = orgUnits %>% 
+  filter( levelName %in% 'District' ,
+          leaf == FALSE ) %>%
+  rename( district = name , district.id = id   )
+
+districts = districtOU$district %>% unique 
+
+facilityDistricts = ous %>%
+  filter( parent %in% districtOU$district.id )  %>%
+  select( id , parent, parentName )
+  
+```
+
  
 ```{r datasetTS}
 
@@ -138,6 +162,76 @@ datasetTS = dataset %>%
     as_tsibble( ., key = c(orgUnit, orgUnitName) , index = month )
 
 ```
+
+
+## Rain 
+
+- for some reason, Likoma is missing rain data 
+
+```{r rainTS}
+
+rainTS = rain %>%
+  filter( grepl( 'DHO', orgUnit.name ) ) %>%
+  filter( ) %>%
+  as_tsibble( index = month , key = orgUnit.name )
+
+  # count( rainTS %>% as_tibble, orgUnit.name)
+rainTS %>% autoplot( avg_month ) + guides( color = FALSE )
+
+rainTS.0 = rainTS %>% 
+  summarise_if( is.numeric, sum, na.rm = TRUE ) 
+
+rainTS.district = rain %>%
+  mutate( district = orgUnit.name  ) %>%
+  as_tsibble( key = district , index = month )
+
+AnnualRainNational = rainTS %>% 
+  index_by( Year = ~ year(.) ) %>%
+  summarise_if( is.numeric, sum, na.rm = TRUE ) 
+
+AnnualRainNational %>% 
+  ggplot( aes( x = Year, y = avg_month ) ) +
+  geom_col()
+
+AnnualRainDistrict = rainTS %>% 
+  index_by( Year = ~ year(.) ) %>%
+  group_by( orgUnit.name  ) %>%
+  summarise_if( is.numeric, sum, na.rm = TRUE ) 
+
+
+ard = AnnualRainDistrict %>% 
+  ggplot( aes( x = Year, y = avg_month , 
+               group = orgUnit.name , fill = orgUnit.name ) 
+          ) +
+  geom_line() 
+
+ggplotly( ard )
+```
+
+Rainfall reduced in 2016-2017.  In 2016, rain way down except for northern zone. In 2017, ~50% reduction in all districts.
+
+```{r rain_guerrero}
+
+# avg_monthly  
+  rainTS.0 %>% autoplot( avg_month )
+  
+  lambdaG.avg_month <- rainTS.0 %>%
+    features( avg_month , features = guerrero) %>%
+    pull(lambda_guerrero)
+  
+  rainTS.0 %>% 
+    mutate( 
+      x = box_cox( avg_month , lambda = lambdaG.avg_month ) ,
+      diff12 = difference( lag( x , 1) , 12 )  
+      ) %>% 
+    gg_tsdisplay( diff12 , plot_type='partial') +
+    ggtitle( 'lambda guerrero transformation' )
+
+  rainTS.0 %>% autoplot( difference( 
+  box_cox( avg_month , lambda = lambdaG.avg_month ) , 1) )
+  
+```
+
 
 ## Plotting TS 
 
@@ -173,6 +267,9 @@ g.scaled %>% plotly::ggplotly()
 ```
  
  
+
+# Declining Confirmed Malaria Cases among children <5, Malawi, 2019
+ 
 ## Annual bar chart
 
 ```{r national_annualized_bar_chart}
@@ -191,7 +288,7 @@ national_annual = datasetTS.0 %>%
 
 ```
 
-# 2019 vs 2018
+## 2019 vs 2018
 
 ```{r annualized_2019_v_2018}
 
@@ -910,68 +1007,7 @@ map( c('ets', 'ets_damped', 'arima' , 'arima_auto' , 'fourier1'  ) ,
 
 For 2 of three models, the actual is within the 80% credible prediction interval.  We need to pay attention to which model is the best fit.  
 
-## Rain 
-
-- for some reason, Likoma is missing rain data 
-
-```{r rainTS}
-
-rainTS %>% autoplot( avg_month ) + guides( color = FALSE )
-
-rainTS.0 = rainTS %>% 
-  summarise_if( is.numeric, sum, na.rm = TRUE ) 
-
-rainTS.district = rain %>%
-  mutate( district = orgUnit.name  ) %>%
-  as_tsibble( key = district , index = month )
-
-AnnualRainNational = rainTS %>% 
-  index_by( Year = ~ year(.) ) %>%
-  summarise_if( is.numeric, sum, na.rm = TRUE ) 
-
-AnnualRainNational %>% 
-  ggplot( aes( x = Year, y = avg_month ) ) +
-  geom_col()
-
-AnnualRainDistrict = rainTS %>% 
-  index_by( Year = ~ year(.) ) %>%
-  group_by( orgUnit.name  ) %>%
-  summarise_if( is.numeric, sum, na.rm = TRUE ) 
-
-
-ard = AnnualRainDistrict %>% 
-  ggplot( aes( x = Year, y = avg_month , 
-               group = orgUnit.name , fill = orgUnit.name ) 
-          ) +
-  geom_line() 
-
-ggplotly( ard )
-```
-
-```{r rain_guerrero}
-
-# avg_monthly  
-  rainTS.0 %>% autoplot( avg_month )
   
-  lambdaG.avg_month <- rainTS.0 %>%
-    features( avg_month , features = guerrero) %>%
-    pull(lambda_guerrero)
-  
-  rainTS.0 %>% 
-    mutate( 
-      x = box_cox( avg_month , lambda = lambdaG.avg_month ) ,
-      diff12 = difference( lag( x , 1) , 12 )  
-      ) %>% 
-    gg_tsdisplay( diff12 , plot_type='partial') +
-    ggtitle( 'lambda guerrero transformation' )
-
-  rainTS.0 %>% autoplot( difference( 
-  box_cox( avg_month , lambda = lambdaG.avg_month ) , 1) )
-  
-```
-
-
-Rainfall reduced in 2016-2017.  In 2016, rain way down except for northern zone. In 2017, ~50% reduction in all distracts.  
 
 ```{r model.0.rain.cross}
 
@@ -1104,50 +1140,25 @@ datasetTS.0.adj  %>%
 
 # District model 
 
+## District TS 
 
-```{r ous, eval=FALSE}
+join districts, summarize, then add rain. 
 
-meta = readRDS( '../HMIS/Surv_Assessment/Malawi/datasets/Malawi_metadata.rds' )
-
-source( '../HMIS/Surv_Assessment/dhis2_functions.R')
-
-ous = ous_from_metatdata( .meta = meta , 
-                          simplify = TRUE , simplify.keep = .02 , SF = TRUE )
-
-saveRDS( ous , file = 'malawi_ous.rda')
-
-```
-
-
-```{r districts }
-ous = readRDS( 'malawi_ous.rds' )
-
-districts = ous %>% filter( level ==3 ) %>%
-  mutate( district = orgUnit.name ,
-          district.id = orgUnit )
-
-region_district = districts %>%
-  select( orgUnit.name, parent_ou.name, district) %>%
-  arrange( parent_ou.name, district ) 
-
-# View( region_district )
+```{r districtTS }
 
 datasetTS.3 = datasetTS %>% 
-  left_join( ous %>% select( orgUnit, parent_ou ) ,
-             by = 'orgUnit' ) %>%
-  left_join( districts %>% 
+  left_join( facilityDistricts %>% select( id, parent , parentName ) ,
+             by = c( 'orgUnit' = 'id' ) ) %>%
+  left_join( districtOU %>% 
                select( district, district.id ), 
-             by = c( 'parent_ou' = 'district.id' )
+             by = c( 'parent' = 'district.id' )
   )  %>%
-  filter( !is.na( district ) ) %>%
   group_by( district ) %>%
   summarise_if( is.integer , sum , na.rm = TRUE ) %>%
 
   left_join( rainTS.district %>% 
                select( month , district , avg_month ) , by = c( 'month' , 'district'  )
                ) 
-
-
 
 ```
 
@@ -1157,13 +1168,33 @@ datasetTS.3 = datasetTS %>%
 datasetTS.3 %>% autoplot( confCases  ) %>%
   plotly::ggplotly()
 
-datasetTS.3 %>% autoplot( avg_month  ) %>%
+datasetTS.3 %>% autoplot( avg_month  ) %>% # rain
   plotly::ggplotly()
 
 
 ```
 
 Lilongwe district is greatest contributor to number of confirmed cases 
+
+```{r dyplot}
+
+dyplot = function(x){
+  
+  ts_xts( x ) %>%
+  dygraphs::dygraph( . ) %>%
+  dyEvent("2018-11-15", "Net Campaign", 
+          labelLoc = "top") %>%
+  dyHighlight(
+    highlightSeriesOpts = list(strokeWidth = 5)
+    ) %>% 
+  dyLegend(show = "follow") %>%
+  dyCSS(textConnection("
+     .dygraph-legend > span { display: none; }
+     .dygraph-legend > span.highlight { display: inline; }
+  "))
+  
+}
+```
 
 ```{r district_percent_total}
 
@@ -1181,52 +1212,42 @@ datasetTS.3 %>%
   
   # Facility RDT
   select( month, district , contains('RDT') & contains('NMCP') ) %>%
-  
-  ts_xts( ) %>%
-  dygraphs::dygraph( . ) %>%
-  dyEvent("2018-11-15", "Net Campaign", 
-          labelLoc = "top") %>%
-  dyHighlight(
-    highlightSeriesOpts = list(strokeWidth = 5)
-    ) %>% 
-  dyLegend(show = "follow") %>%
-  dyCSS(textConnection("
-     .dygraph-legend > span { display: none; }
-     .dygraph-legend > span.highlight { display: inline; }
-  "))
-  
-
+ 
+  dyplot
 
 ```
 
 Lilongwe district acounts for 5-20% of cases each month.  3 districts acount for 30% each month (Lilongwe , Mangochi, Kasungu )
 
 
+Change in confirmed cases from first value.  
 
-```{r district_scaled }
-
-datasetTS.3 %>% 
+```{r district_logDiff }
+datasetTS.3.scaled= 
+  datasetTS.3 %>% 
+  pivot_longer( !matches( c('month', 'district') ) , names_to = 'var' , values_to = 'val' ) %>% 
+  group_by( month , var ) %>% 
+  mutate( total = sum( val, na.rm = TRUE )) %>%
+  group_by( month, var ,district ) %>%
+  mutate( pct = val / total ) %>%
+  select( - total , -val ) %>%
+  pivot_wider( names_from = 'var' , values_from = 'pct') %>% 
+  as_tsibble( index = month , key = district ) %>%
+  # Facility RDT
+  select( month, district , confCases ) 
+  
+datasetTS.3.scaled %>% 
   group_by( district  ) %>%
   mutate( confCases.scaled = scale( confCases ) ,
           confCases.logDiff = log( confCases) - log( first(confCases) ) ) %>%
   # autoplot( confCases.scaled   ) %>%
   select( district , month, confCases.logDiff ) %>%
-  ts_xts() %>%
-  dygraphs::dygraph( . ) %>%
-  dyEvent("2018-11-15", "Net Campaign", 
-          labelLoc = "top") %>%
-  dyHighlight(
-    highlightSeriesOpts = list(strokeWidth = 5)
-    ) %>% 
-  dyLegend(show = "follow") %>%
-  dyCSS(textConnection("
-     .dygraph-legend > span { display: none; }
-     .dygraph-legend > span.highlight { display: inline; }
-  "))
+  dyplot()
+  
 
 ```
 
-When scaled,Mwanza Feb 2017 is 5 SD, whereas other series have no values >3sd 
+When scaled, Mwanza Feb 2017 is 5 SD, whereas other series have no values >3sd 
 
 When log difference, Chiradzulu has greatest change, ~ 3x
 
@@ -1302,11 +1323,12 @@ map( cols , ~bind_rows(
 how many facilities have enough data for modeling time-series? 
 
 ```{r, district_histogram_monthly_submissions}
+cols = setdiff( names( datasetTS.3 ) , c( 'month' , 'district', 'avg_month' ) )
 
 orgUnit.counts = 
-  dataset %>%
+  datasetTS %>% as_tibble() %>% 
   group_by( orgUnit ) %>% 
-  summarise_if( is.integer, ~sum( !is.na(.) ) ) 
+  summarise_if( is.integer , ~sum( !is.na(.) ) ) 
 
 confCases.counts = orgUnit.counts %>%
   select( orgUnit , confCases ) %>%
@@ -1316,7 +1338,7 @@ map( cols ,
      ~ orgUnit.counts %>%
        # select( orgUnit , .x ) %>%
        mutate( years_of_data = ( !! rlang::sym( .x ) / 12 ) %>% 
-                 round(0) %>% as.integer())  %>%
+                 round(0) %>% as.integer() )  %>%
        ggplot( aes( years_of_data ) ) +
        geom_histogram( binwidth = 1 ) +
        labs( title = 'Frequency of monthly data available for each orgUnit' ,
@@ -1326,7 +1348,7 @@ map( cols ,
              x = 'Years of Data' 
   ) +
     expand_limits( x = 5 ) +   
-    stat_bin( binwidth=1 , geom="text", colour="white", size=3.5,
+    stat_bin( binwidth = 1 , geom="text", colour="white", size=3.5,
            aes( label = ..count.. ), 
            position=position_stack( vjust=0.5) ) +
     theme_bw()
@@ -1366,9 +1388,9 @@ atLeast48.confCases = confCases.n %>%
   filter( confCases >= 48 ) %>%
   pull( orgUnit )
 
-length( atLeast48.confCases )
 
 ```
+The number of facilities with at least 48 months of data (out of possible 60) is `r length( atLeast48.confCases )` 
 
 ## Summarise missingness
 
@@ -1528,7 +1550,7 @@ train.3.lo = datasetTS.3 %>%
     
    RDTsoDays = `OpenLMIS MAL Malaria Rapid Diagnostic Test (MRDT) Kits Stock out days_default`  ) %>%
   
-  filter( month < yearmonth( "2018-Dec" )  ) %>%
+  filter( month < yearmonth( "2018-Jan" )  ) %>%
     select( district, month, confCases , avg_month ,
             chdRDTSO7 , RDTsoDays ) %>% 
     fill_gaps()
@@ -1536,7 +1558,7 @@ train.3.lo = datasetTS.3 %>%
 districtsWithRainData = count( rainTS.district %>% as_tibble %>% ungroup , district )
 
 fit.train.3.lo = train.3.lo  %>%
-   filter( !district %in% 'Likoma-DHO' ) %>%
+   filter( district %in% districtsWithRainData$district ) %>%
    model(
 
           ets = ETS( log(confCases + 1)  ) ,
@@ -1609,10 +1631,11 @@ train.3.test =
    RDTsoDays = `OpenLMIS MAL Malaria Rapid Diagnostic Test (MRDT) Kits Stock out days_default`  )  %>%
   
   mutate( confCases = ifelse( 
-    month < yearmonth( "2018-Dec" ) ,
+    month < yearmonth( "2018-Jan" ) ,
     confCases,  NA )
   ) %>%
-  filter(  month >= yearmonth( "2018-Dec" ) )
+  filter(  month >= yearmonth( "2018-Jan" ) &
+             month < yearmonth( "2019-Jan" ) )
 
 
 # fore3.lo = fit.train.3.lo %>% 
@@ -1621,7 +1644,7 @@ train.3.test =
 
 ### FORECAST FAILS for districts 16 and 17 
 ### "Mzimba-North-DHO" "Mzimba-South-DHO"
-pred.3  = fit.train.3.lo[ c(1:15, 18:28) ,] %>%
+pred.3  = fit.train.3.lo[ ,] %>%
   select( district, ets , arima_log , rain , so_log) %>%
   forecast( new_data = train.3.test ) %>%
   group_by( .model ) %>%
@@ -1632,12 +1655,21 @@ pred.3  = fit.train.3.lo[ c(1:15, 18:28) ,] %>%
 
 pred.3 %>% 
   autoplot( level = NULL ) + 
-  autolayer( datasetTS.3 , confCases ) +
+  autolayer( 
+    datasetTS.3 %>% filter(month < yearmonth( "2019-Jan" )  ), confCases ) +
   facet_wrap( ~ district , scales = 'free' )
 
 accuracy( pred.3, datasetTS.3 ) %>%
   group_by( .model ) %>%
   summarise_if( is.numeric, mean , na.rm = TRUE ) 
+
+pred.3 %>% 
+  filter( .model %in% 'so_log' ) %>%
+  autoplot( level = NULL ) + 
+  autolayer( 
+    datasetTS.3 %>% filter(month < yearmonth( "2019-Jan" )  ), confCases ) +
+  facet_wrap( ~ district , scales = 'free' )
+
 
 models = c('ets' , 'arima_log' , 
            'rain' ,  'so_log'  )
@@ -1699,22 +1731,22 @@ fore.train.3 %>% accuracy( datasetTS.3 )
 # Facility model  
 
 
+## Facility features 
+
 ```{r train4}
 # trainin set
 train.4 = datasetTS %>% 
   filter( 
-    month < yearmonth( "2018-Dec" ) ,
+    # month < yearmonth( "2018-Dec" ) ,
     orgUnit %in% atLeast48.confCases
     ) %>% 
   select( orgUnit, month, confCases ) %>% 
-  fill_gaps()
+  fill_gaps() 
 
 ou = train.4$orgUnit %>% unique()
 
 ```
 
-
-## time series features 
 
 ```{r time-series-features, eval=FALSE}
 
@@ -1777,28 +1809,17 @@ if ( length( i ) < 6 ){
 fit.train.4 = train.4 %>%
   filter( orgUnit %in% ou[i] ) %>%
     model( 
-          
-          stl = STL( log(confCases + 1) ~ 
-                       season( window = 13 ) + 
-                       trend( window = 13 ) ) ,
-
-          ets = ETS( log(confCases + 1)  ) ,
-          
-
-          ets_damped = ETS( log(confCases + 1)  ~ trend("Md") ,
-                            restrict = FALSE ) ,
-          
-          seats = model(seats = feasts:::SEATS(log(confCases + 1))) ,
-          
-          arima = ARIMA( log(confCases + 1) ~ pdq(0:3,0:3,0:3) + PDQ(0:3,0:3,0:3)) ,
-          
-          fourier1 = ARIMA( log(confCases + 1) ~ 
-                              fourier( K = 1 ) + PDQ(0,0,0)) ,
-          
-          fourier2 = ARIMA( log(confCases + 1) ~ 
-                              fourier( K = 2 ) + PDQ(0,0,0))
-           ) 
-
+      
+      ets = ETS(  log( confCases + 1 ) ) ,
+      #      # ets.damped = ETS( log( confCases + 1 )~ trend("Md") ) ,
+      #      stl = STL( log( confCases + 1 ) ~ season(window=12) + trend(window=11)) ,
+      
+           arima = ARIMA( log( confCases + 1 ) ~ 
+                            pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1) ) ,
+           
+           fourier = ARIMA( log( confCases + 1 ) ~ 
+                              fourier(K = 1) + PDQ(0,0,0))
+                                     )
 
 save( train.4, fit.train.4 , file = 'train4.Rda' )
 # load( 'train4.Rda'  )
@@ -1864,8 +1885,6 @@ load( 'train4.Rda'  ) # train.4 and fit.train.4
 
 ```{r model.4.metrics_examples}
 
-i=1
-
 # decomp method
 dm = map( i , ~fit.train.4  %>% 
                filter( orgUnit %in% ou[ .x ] ) %>% 
@@ -1879,10 +1898,12 @@ dm = map( i , ~fit.train.4  %>%
 
 dm 
 
+i = 1:nrow(fit.train.4)
+
 # STL only
 rsd = map( i , ~fit.train.4   %>% 
              select( orgUnit, stl ) %>% 
-               filter( orgUnit %in% ou[ .x ] ) %>% 
+               filter( row_number() == .x ) %>% 
                  summarise( 
                      sd_remainder = var( decomp_remainder(.) ,
                                          na.rm = TRUE )^.5 , 
@@ -1890,35 +1911,93 @@ rsd = map( i , ~fit.train.4   %>%
             )
         ) %>% bind_rows()
 
+summary( rsd$sd_remainder )
+
 ```
 
 ```{r model.4.metrics}
 
-summary( rsd$sd_remainder )
-
 # non-STL !! LONG - convert to function with progress bar
 rsd.all = map( i , ~fit.train.4  %>% 
                filter( orgUnit %in% ou[ .x ] ) %>% 
-                select( -stl ) %>% 
+                # select( -stl ) %>% 
                  augment() %>% 
+                 mutate( pe = abs( log( confCases + 1 ) - log( .fitted + 1 ) )  
+                         ) %>%
                  as_tibble %>% 
                  group_by( orgUnit, .model ) %>%
                  summarise( 
                      sd_remainder = var( .resid ,
-                                         na.rm = TRUE )^.5 
+                                         na.rm = TRUE )^.5 ,
+                     
+                     mape = mean( pe , na.rm = TRUE )
                      )
         ) %>% 
   bind_rows()
 
-summary( rsd.all$sd_remainder )
-rsd.all %>% group_by( .model ) %>% summarise( mean( sd_remainder , na.rm = TRUE ) )
+ggplot( rsd.all , aes( sd_remainder, mape , group = .model ) ) +
+  geom_point()
+
+rsd.all %>% 
+  group_by( .model ) %>% 
+  do( tidy(summary( .$sd_remainder )) )
+
+rsd.all %>% 
+  group_by( .model ) %>% 
+  do( tidy(summary( .$mape )) )
+
+ggplot( rsd.all %>% filter(.model == 'arima' ) ) +
+  geom_histogram( aes( sd_remainder )) + theme_bw()
+
+ggplot( rsd.all %>% filter(.model == 'arima' ) ) +
+  geom_histogram( aes( mape )) + theme_bw()
+```
+
+```{r model4.metrics_samples}
+arima.rsd = rsd.all %>% filter( .model == 'arima' )
+
+# sample from lower remainders 
+lows = sample( which( arima.rsd$sd_remainder < .7 ) , 3 )
+fit.train.4.lows =   fit.train.4 %>% 
+    select( orgUnit, arima ) %>%
+    filter( orgUnit %in% arima.rsd[lows,]$orgUnit ) 
+train.4.lows = train.4 %>% filter( orgUnit %in% arima.rsd[lows,]$orgUnit ) 
+
+fit.train.4.lows %>%
+    augment() %>% 
+    autoplot(.fitted) +
+    autolayer( train.4.lows %>%
+                   mutate( .model = "Actual" ),
+                 confCases ) + 
+
+     facet_wrap( ~orgUnit ) +
+      labs( title =  'Sample of Facilities with Better Time Series' , 
+            subtitle = lows ) 
+
+highs = sample( which( arima.rsd$sd_remainder > .7 ) , 3 )
+fit.train.4.highs =   fit.train.4 %>% 
+    select( orgUnit, arima ) %>%
+    filter( orgUnit %in% arima.rsd[highs,]$orgUnit ) 
+train.4.highs = train.4 %>% filter( orgUnit %in% arima.rsd[highs,]$orgUnit ) 
+
+fit.train.4.highs %>%
+    augment() %>% 
+    autoplot(.fitted) +
+    autolayer( train.4.highs %>%
+                   mutate( .model = "Actual" ),
+                 confCases ) + 
+     facet_wrap( ~orgUnit ) +
+      labs( title =  'Sample of Facilities with Poorer Time Series' , 
+            subtitle = paste( arima.rsd[highs,]$sd_remainder %>% round ,
+                              collapse = ' , ' ) 
+      )
 
 # ou with highest remainder...
 orgUnit.max.resid = rsd %>% arrange( desc( sd_remainder ) ) %>% 
     head(1) %>% pull( orgUnit ) 
 
   fit.train.4 %>% filter( orgUnit %in% orgUnit.max.resid ) %>%
-    select( -stl ) %>%
+    # select( -stl ) %>%
     augment() %>% 
     autoplot(.fitted) +
       autolayer( train.4 %>% 
@@ -1933,7 +2012,7 @@ orgUnit.max.resid = rsd %>% arrange( desc( sd_remainder ) ) %>%
     head(1) %>% pull( orgUnit ) 
 
   fit.train.4 %>% filter( orgUnit %in% orgUnit.min.resid ) %>%
-    select( -stl ) %>%
+    # select( -stl ) %>%
     augment() %>% 
     autoplot(.fitted) +
       autolayer( train.4 %>% 
@@ -1942,7 +2021,6 @@ orgUnit.max.resid = rsd %>% arrange( desc( sd_remainder ) ) %>%
                  confCases ) + 
       labs( title =  'Lowest Residual' , 
             subtitle = orgUnit.min.resid ) 
-
 
 ```
 
