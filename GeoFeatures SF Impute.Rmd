@@ -1,0 +1,387 @@
+---
+title: "GeoFeatures Clean and Impute"
+output: html_document
+params:
+   country: Nigeria
+---
+
+# `r params$country`
+
+
+<!-- TODO: in first map, don;t use newOUS.  In second, color imputed.   -->
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+
+library(pacman)
+p_load( knitr, knitrProgressBar , scales, 
+        tidyverse, readxl, patchwork, hrbrthemes,
+        tsibble, fable, fabletools, feasts, slider, anomalize, 
+        furrr, tictoc, ggrepel , sf , ggspatial, anytime,  )
+
+most_recent_file = function( file_list_with_date ){
+  rdsFileSplit = str_split( file_list_with_date, "_")
+  download_date = map( rdsFileSplit ,
+                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  ) %>% map_chr(1) 
+  
+  dates  = map_chr( download_date , ~ anydate(.x)  )
+  
+  if ( identical( dates , character(0) ) ) return( NA )
+  
+  # most recent file 
+  file = file_list_with_date[ which( dates == max(dates, na.rm = T ) ) ]
+  
+  return ( file )
+}
+
+```
+
+
+```{r}
+dir = paste0('../dataDictionary/dhis2_dictionary/Formulas/', 
+             params$country , '/')
+
+ous.file = 
+  if ( file.exists( paste0( dir , 'newOUS.rds')  ) ){
+    paste0( dir , 'newOUS.rds')
+    
+    } else {
+    dir.files = list.files( dir )
+    ous.files = dir.files[ grepl( 'geoFeatures' , dir.files,
+                                              fixed = TRUE  )]
+    most_recent_file( ous.files ) 
+  }
+
+ous = readRDS( paste0( dir, ous.file )) 
+
+ous = ous %>% 
+  rename( orgUnit = id ) %>%
+  mutate( parent.id = ous$parent$id ,
+          feature = st_geometry_type( ous ) ) %>%
+  select( -parent )
+
+# saveRDS( ous , paste0( dir, ous.file ) ) 
+
+glimpse( ous )
+
+ous %>% as_tibble %>% count( feature )
+
+View( ous )
+```
+
+_ for each non Admin orgUnit, 
+- if it is geocoded, check if it is within the admin it belongs to
+- if not geocoded, randomly assign geocode with admin it belongs to
+
+Step: find orgUnit with polygon data that it belongs to. Separate path and transform to long lorm
+
+
+```{r clinics2. }
+
+# hf = ous %>% filter( feature %in% 'POINT' ) %>% st_drop_geometry()
+hf = ous %>% filter( grepl("POINT", st_geometry_type(geometry) ) ) # %>% st_drop_geometry()
+
+admins = ous %>% filter( grepl("POLYGON|MULTIPOLYGON", st_geometry_type(geometry) ) ) # %>% st_drop_geometry()
+# admins = ous %>% filter( feature %in% 'MULTIPOLYGON' ) %>% st_drop_geometry()
+
+levelNames = count( ous %>% as_tibble, levelName ) %>% arrange( n )
+
+ ggplot( ) + 
+  geom_sf( data = admins ) +
+  geom_sf( data = hf , alpha = .25 ) +
+  # geom_sf( data = fs_selected() , color = 'brown' ) + 
+  theme_ipsum()
+```
+
+- Check if facility with coordinates is in parent 
+
+<!-- TODO:  This only works for level one below the admin units.  Does not work for CHW assigned to facilities.  Update code to check if CHW are in the admin area of the facility they are associated with.   -->
+
+
+```{r}
+
+ is.in.parent = function( clinic.id , parent.id , 
+                          ous = NULL ,
+                          # clinics = NULL , 
+                          plot = FALSE , fix = TRUE , .pb = NULL, 
+                          buffer_arc_seconds = .01 ){
+     
+     # cat( clinic.id ); cat(" : ") ; cat( parent.id )
+     
+     if (is.null( ous ) ) return( NA )
+     update_progress(.pb) 
+     
+     if ( !any(  ous$orgUnit %in% parent.id ) ) return( FALSE )
+     
+     parent = ous[ ous$orgUnit %in% parent.id , ]
+     
+     if ( is.na( parent.id ) ) return( FALSE )
+     
+     # skip if parent is not a polygon
+     if ( !grepl("POLYGON|MULTIPOLYGON", st_geometry_type(parent$geometry) ) ) return( NA )
+     
+     parent.polygon = parent$geometry
+     parent.polygon = suppressWarnings( suppressMessages(
+         st_buffer( parent.polygon , dist = buffer_arc_seconds )
+         # dist is in arc-seconds, approx 31 meters at equator. default = 30, 1km
+     ))
+    
+     clinic.coords = ous %>% filter( orgUnit %in% clinic.id ) 
+
+     is.in = suppressMessages( # block 'st_intersects assumes that they are planar'
+         st_intersects( clinic.coords ,  parent.polygon, sparse = FALSE  ) %>%
+         apply(., 1, any) # returns true if any are true
+     )
+     
+     if ( plot ){
+         
+         ggplot( parent  ) +
+             geom_sf( ) +
+             geom_sf( data = clinic.coords , color = 'red') +
+             geom_sf_label( data = clinic.coords , 
+                            aes( label = name), 
+                            vjust = -.5 ) +
+             geom_sf_label(aes( label = name), 
+                            vjust = -.5 )
+     }
+
+     if (is.in == FALSE & fix ){
+         
+         if ( is.na( st_dimension( clinic.coords ) ) ){ return( NA )}
+         coords = st_coordinates( clinic.coords ) 
+         coords.df = tibble( long = coords[2] , lat = coords[1])  # reversed
+         
+         clinic.coords.reversed = st_as_sf( coords.df ,
+                                            coords = c( "long", "lat" ) , # reverse
+                                            crs = st_crs( clinic.coords ) 
+                                            )
+         
+         is.in = suppressMessages( # block 'st_intersects assumes that they are planar'
+             st_intersects( clinic.coords.reversed ,  parent.polygon, sparse = FALSE  ) %>%
+                 apply(., 1, any) # returns true if any are true
+         )
+         
+         if ( is.in ) return( is.in )
+         
+     }
+     
+     return( is.in )
+ }
+ 
+
+ impute.location = function( parent.id , plot = FALSE  ){
+     
+     parent.polygon = admins[ admins$orgUnit %in% parent.id , ]
+     
+     if ( nrow( parent.polygon ) == 0 ) return( NA  )
+     
+     clinic.spatialPoint = suppressMessages(
+         st_sample( parent.polygon , 1 , type = "random", iter = 10 ) 
+     )
+     
+     if ( plot ){ 
+         
+        ggplot( parent.polygon  ) +
+             geom_sf( ) +
+             geom_sf( data = clinic.spatialPoint , color = 'red') 
+     }
+     
+     
+     return( clinic.spatialPoint )
+     
+     # imputed.coords = st_coordinates( clinic.spatialPoint )
+     # return( imputed.coords )
+ }
+ 
+ 
+```
+
+
+
+```{r facilityInParent. }
+
+     nc = nrow( hf )
+     
+     pb <- progress_estimated( nc )
+     
+     hf$in.parent = map_lgl( 1:nrow( hf ) ,
+                                  ~is.in.parent( clinic.id = hf[.x, ]$orgUnit, 
+                                                 parent.id = hf[.x, ]$parent.id, 
+                                                .pb = pb, 
+                                                ous = ous ,
+                                                buffer_arc_seconds = .01 )
+          ) 
+     
+     # test if facility is in lowest parent level
+     c = hf %>% 
+         group_by( orgUnit ) %>%
+         mutate(
+             # has.coordinates = ifelse( is.na( st_dimension(geometry) ) | 
+             #                               is.na( geometry ), 
+             #                           FALSE, TRUE ) ,
+             
+              has.coordinates = st_is_valid(geometry) ,
+             
+             has.parent = map_lgl( parent.id , ~.x %in% ous$orgUnit )
+         ) %>%
+         ungroup
+ 
+ 
+     count( c %>% st_drop_geometry(), 
+            levelName ,  has.coordinates , has.parent,  in.parent  ) 
+ 
+
+
+# testing
+     # x  = c %>% filter( is.na( in.parent ))
+# is.in.parent( clinic.id =  x[1,]$orgUnit , 
+#               parent.id =  x[1,]$parent , 
+#                                                 .pb = pb, 
+#                                                 ous = ous ,
+#                                                 buffer_arc_seconds = .01 )
+
+```
+
+
+- Try fixing the ones that are not in parent
+
+```{r c.fix. }
+ 
+ hf.to.fix = c %>%
+     filter( has.coordinates  %in% TRUE,  
+             has.parent %in% TRUE , 
+             in.parent %in% FALSE ) 
+
+ hf.to.impute =  c %>%
+     filter( has.coordinates  %in% FALSE ,  
+             has.parent %in% TRUE ) 
+ 
+ ncfix = nrow(c.to.fix)
+ in.parent.fix = vector( "list", length = ncfix ) 
+ pb <- progress_estimated( ncfix )
+ 
+ if ( ncfix >=1 ){
+ for ( i in 1:ncfix ){
+
+        pb$pause(0)$tick()$print()
+
+        in.parent.fix[[i]] = map2_lgl( c.to.fix$orgUnit[i], 
+                                   c.to.fix$parent[i] , 
+                                   ~is.in.parent( .x, .y  , 
+                                                  fix = TRUE ,
+                                                  .pb = pb, 
+                                                  ous = ous ,
+                                                  buffer_arc_seconds = 300  )
+        )
+ }
+
+ 
+ c.to.fix$in.parent.fix = in.parent.fix %>% unlist   
+
+ count( c.to.fix %>% as_tibble() , levelName ,  in.parent.fix )
+
+ }
+ 
+ # Update c with c.fix
+ # c. = left_join( c, c.fix %>% select( id, parent.level, in.parent.fix ), 
+ #                by = c( 'id' , 'parent.level' ) 
+ #                ) %>%
+ #     mutate(
+ #         long. = ifelse( in.parent.fix %in% TRUE , lat, long ) ,
+ #         lat. = ifelse( in.parent.fix %in% TRUE , long , lat ) ,
+ #         long = long. ,
+ #         lat = lat.
+ #     ) %>%
+ #     select( -long., -lat. )
+ 
+ # update rows in c 
+ fixed = c.to.fix$in.parent.fix == TRUE 
+ if ( sum( fixed ) > 0 ){
+     ids = c.to.fix[ fixed, ]$orgUnit
+     fixed.ous.rows = c$orgUnit %in% ids 
+     c$in.parent.fix = NA
+     c[ which(fixed.ous.rows) , ] = c.to.fix[ fixed , ]
+ }
+ 
+```
+
+- If coordinates are missing, or the clinic is not in its parent, then impute a location.
+
+<!-- TODO: Update impute locations for SF objects -->
+
+```{r missingCoords}
+
+
+noCoord_noParent = ous %>% 
+  filter( feature %in% "GEOMETRYCOLLECTION" , # short for GEOMETRYCOLLECTION EMPTY
+          !is.na( parent.id )) 
+
+
+    
+```
+
+```{r ImputeLocation. }
+
+     c.impute = c %>% 
+        filter( 
+            !has.coordinates | (!in.parent ) , !is.na( parent )
+            ) 
+     
+     # for testing, plot ...
+     # i = 8
+     # plot( st_geometry(ous %>% filter( orgUnit %in% c.impute[i,]$parent_ou ) ))
+     # plot(st_geometry(c.impute[i,]  ) , add = T, col ="red")
+     # 
+     # # get distance from point to parent polygon
+     # dist = st_distance( c.impute[i,] , 
+     #                   ous %>% filter( orgUnit %in% c.impute[i,]$parent_ou ) 
+     #                   , by_element = TRUE )
+     # dist
+     
+    impute = bind_rows( noCoord_noParent, c.impute )
+    
+    n_impute = nrow( impute )
+
+     p <- progress_estimated( 10 ) #n_impute )
+     
+     for ( i in 1:10 ){
+         
+            p$pause(0)$tick()$print()
+          
+            impute[i,]$geometry = impute.location(  impute[i,]$parent.id ) 
+                                    
+     }        
+     
+     impute$imputed = TRUE 
+     
+     c$imputed = FALSE 
+     
+    new.hf = rbind( c.impute , 
+                        c %>% filter( !orgUnit %in% c.impute$orgUnit )  
+    )
+    
+    admins$imputed = NA 
+    admins$in.parent = NA
+    admins$in.parent.fix = NA
+    admins$has.coordinates = !is.na( st_dimension( admins ))
+    admins$has.parent = !is.na( admins$parent )
+    
+    new.ous = rbind( new.hf, admins )
+    
+    saveRDS( new.ous , paste0( dir , 'newOUS.rds') )
+```
+
+```{r}
+
+hf = new.ous %>% filter( feature %in% "POINT"  ) # %>% st_drop_geometry()
+
+admins = new.ous %>% filter( feature %in% c('MULTIPOLYGON', 'POLYGON') ) # %>% 
+
+ ggplot( ) + 
+  geom_sf( data = admins ) +
+  geom_sf( data = hf , alpha = .25 ) +
+  # geom_sf( data = fs_selected() , color = 'brown' ) + 
+  theme_ipsum()
+```
+

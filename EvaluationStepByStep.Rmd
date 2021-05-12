@@ -2,11 +2,15 @@
 title: "Evaluation - Step By Step"
 author: "jp"
 date: "3/8/2020"
-output: 
-   html_document:
-     toc: true
-     toc_float: true
-     code_folding: show  
+output:
+  html_notebook: default
+  html_document:
+    toc: yes
+    toc_float: yes
+    code_folding: show
+  word_document:
+    toc: yes
+always_allow_html: true
 ---
 
 ```{r setup, include=FALSE}
@@ -26,7 +30,6 @@ library( CausalImpact ) # loads MASS, which causes conflict with
 library( anomalize )
 library( tibbletime )
 library( dygraphs )
-library( tsbox )
 
 library( readxl )
 
@@ -757,7 +760,8 @@ ggplot( rsd.all %>% filter(.model == 'arima' ) ) +
 ```{r high_fidelity}
 
 hifiFacilities =  rsd.all %>% 
-  filter( mape <=.5 & abs( mpe ) < .1 ) %>%
+  # filter( mape <=.5 & abs( mpe ) < .1 ) %>%
+  filter( abs( mpe ) < .1 ) %>%
   pull( orgUnit )
 
 paste(
@@ -839,7 +843,7 @@ fit.dTs.district.train = dTs.district.train  %>%
           #                  pdq(0,1,1) + PDQ(0,1,0)) ,
  
           arima = ARIMA( box_cox( confCasesNew , lambda = .5 ) ~
-                           pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1)
+                           pdq(0:2,0:1,0:2) + PDQ(0:2,0:1,0:2) 
                            ) ,
 # 
 #           fourier1_log = ARIMA( confCasesNew ~
@@ -860,13 +864,13 @@ fit.dTs.district.train = dTs.district.train  %>%
           rain_so = ARIMA( box_cox( confCasesNew , lambda = .5 ) ~
                             rain +
                             stockoutsNew +
-                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1)
+                          pdq(0:2,0:1,0:2) + PDQ(0:2,0:1,0:2) 
                         ) ,
 
           rain_lag_so = ARIMA( box_cox( confCasesNew , lambda = .5 ) ~
                             rain_lag +
                             stockoutsNew +
-                          pdq(0:1,0:1,0:1) + PDQ(0:1,0:1,0:1)
+                          pdq(0:2,0:1,0:2) + PDQ(0:2,0:1,0:2) 
                         ) 
           # 
           # rain_so_att = ARIMA(  confCasesNew  ~ 
@@ -886,7 +890,7 @@ Model formulas
 
 fit.dTs.district.train = readRDS('MalawiPBO/fit.dTs.district.train.rds' )
 
-fit.dTs.district.train$rain_so
+fit.dTs.district.train$rain_lag
 
 
 ```
@@ -940,7 +944,7 @@ map(
 
 ```
 
-# 12. Cross-validate to check model fit
+# 12. Cross-validate to check model fit 
 
 Predict values in test period and compare predicted vs actual as mean absolute percent error (MAPE)
 
@@ -963,7 +967,9 @@ pred.dTs.district.train.accuracy = accuracy( pred.dTs.district.train, dTs.distri
 
 ```
 
+
 ```{r crossValPlots}
+
 map( 
   c("arima" , "rain" , "rain_so" , "rain_lag", "rain_lag_so" ) ,
 
@@ -978,6 +984,94 @@ map(
 )
 
 ```
+
+```{r}
+
+pred.dTs.district.train %>% 
+       filter( .model %in% 'rain_so', 
+               parentName %in% "Lilongwe-DHO" ) %>%  
+       autoplot( color = 'red' , alpha = .5 ) + 
+       autolayer( dTs.district %>% 
+                    filter( period < yearmonth( "2019 Jan") ,
+                            parentName %in% "Lilongwe-DHO" ) ,
+                  confCasesNew , 
+                  color = 'black' , alpha = .5 ) +
+       # facet_wrap( ~parentName , scale = 'free' ) +
+       ggtitle( '' ) + guides( color = FALSE )
+
+```
+
+
+# 12a. Calculate: Difference between actual and counterfactual in Pre-Invtervention period
+
+```{r PreIntervention.difference}
+# this is hard wired for the re-aggregated district data, dTs.district, and thte 
+# district-level predictions, pred.dTs.district.postIntervention 
+
+# accessory functions
+mape <- function(actual,pred){
+           mape <- mean(abs((actual - pred)/actual), 
+                        na.rm = TRUE )*100
+           return (mape)
+}
+
+mpe <- function(actual,pred){
+            pctActual = ifelse( pred == 0 , NA ,
+                                (actual - pred)/pred
+                                )
+           mpe <- mean( pctActual  , 
+                        na.rm = TRUE )*100
+           return (mpe)
+}
+
+
+
+district.PreIntervetnionDifference =  
+  
+  left_join( pred.dTs.district.train %>% as_tibble %>%
+             rename( predicted = confCasesNew , district = parentName ) ,
+             
+             dTs.district.train %>% as.tibble %>%
+               rename( actual = confCasesNew , district = parentName ) %>%
+               select( district , period, actual ) , 
+             
+             by = c("district", "period")
+             ) %>%
+    mutate( difference = actual - predicted ) %>%
+    group_by( district ) %>%
+    summarise( percentChange = mpe( actual , predicted ) )
+
+
+summary( district.PreIntervetnionDifference$percentChange )
+
+# district.difference %>% arrange( percentChange ) %>% head(50)
+
+cat(
+  'For 2019, during the intervention period, the mean percent change from expected (by district) was' ,
+  mean( district.PreIntervetnionDifference$percentChange , na.rm = TRUE  ) %>% round  ,
+  '(range:' , 
+  paste0( 
+    range(district.PreIntervetnionDifference$percentChange , na.rm = TRUE) %>% round , 
+    collapse = ' to ' 
+    ) ,
+  ')'
+)
+```
+
+```{r chart.percentChangeDuringPreIntervention}
+
+
+ggplot( district.PreIntervetnionDifference %>% filter( !is.na( percentChange )) ) + 
+  geom_col( aes( y = reorder( district , -percentChange ) , 
+                              x = percentChange ) ) + 
+  labs( title = 'Percent change in number of confirmed malaria cases' ,
+        subtitle = 'Cumulative change at selected facilities within district\nduring intervention period, Jan-Dec, 2019' ,
+        y = 'District' , x = 'Percent Change'
+        ) +
+  scale_x_continuous( breaks = seq(-100, 200, 25))
+ 
+```
+
 
 # 13.  Select best model 
 
@@ -1118,6 +1212,74 @@ pred.dTs.district.postIntervention %>%
                   color = 'black' , alpha = .5 ) +
        facet_wrap( ~parentName , scale = 'free' ) +
        ggtitle( 'Expected and Actual Cases, pre and post-intervention'  ) 
+
+```
+```{r ExamplePrePost}
+
+example = dTs.district %>%  
+  filter( parentName %in% "Lilongwe-DHO" ) 
+
+e1 = example %>%  
+  filter( period < yearmonth( "2018 Jan") ) %>% 
+  autoplot( confCasesNew ) +
+  expand_limits( x = yearmonth( "2020 Jan")) +
+  labs( title = "Lilongwe Confirmed Cases" , 
+        y = "Cases" , x = "Month") +
+  theme_bw( base_size = 20 )
+
+e2 = pred.dTs.district.train %>% 
+       filter( .model %in% 'rain_so', 
+               parentName %in% "Lilongwe-DHO" ) %>%  
+       autoplot( color = 'red' , alpha = .5 ) + 
+  autolayer( example %>% 
+               filter( period < yearmonth( "2018 Jan") ) ,
+             confCasesNew ) +
+  expand_limits( x = yearmonth( "2020 Jan")) +
+  labs( title = "Lilongwe Confirmed Cases" , 
+        y = "Cases" , x = "Month") +
+  theme_bw( base_size = 20 )
+
+e3 = pred.dTs.district.train %>% 
+       filter( .model %in% 'rain_so', 
+               parentName %in% "Lilongwe-DHO" ) %>%  
+       autoplot( color = 'red' , alpha = .5 ) + 
+  autolayer( example %>% 
+               filter( period < yearmonth( "2019 Jan") ) ,
+             confCasesNew ) +
+  expand_limits( x = yearmonth( "2020 Jan")) +
+  labs( title = "Lilongwe Confirmed Cases" , 
+        y = "Cases" , x = "Month") +
+  theme_bw( base_size = 20 )
+
+e4 = pred.dTs.district.postIntervention %>% 
+       filter( .model %in% 'rain_so', 
+               parentName %in% "Lilongwe-DHO" ) %>%  
+       autoplot( color = 'red' , alpha = .5 ) + 
+  autolayer( example %>% 
+               filter( period < yearmonth( "2019 Jan") ) ,
+             confCasesNew ) +
+  expand_limits( x = yearmonth( "2020 Jan")) +
+  labs( title = "Lilongwe Confirmed Cases" , 
+        y = "Cases" , x = "Month") +
+  theme_bw( base_size = 20 )
+
+e5 = pred.dTs.district.postIntervention %>% 
+       filter( .model %in% 'rain_so', 
+               parentName %in% "Lilongwe-DHO" ) %>%  
+       autoplot( color = 'red' , alpha = .5 ) + 
+  autolayer( example %>% 
+               filter( period < yearmonth( "2020 Jan") ) ,
+             confCasesNew ) +
+  expand_limits( x = yearmonth( "2020 Jan")) +
+  labs( title = "Lilongwe Confirmed Cases" , 
+        y = "Cases" , x = "Month") +
+  theme_bw( base_size = 20 )
+
+ggsave("MalawiPBO/e1.png" , e1 , width = 10 , height = 5.5 ) 
+ggsave("MalawiPBO/e2.png" , e2 , width = 10 , height = 5.5 ) 
+ggsave("MalawiPBO/e3.png" , e3 , width = 10 , height = 5.5 ) 
+ggsave("MalawiPBO/e4.png" , e4 , width = 10 , height = 5.5 ) 
+ggsave("MalawiPBO/e5.png" , e5 , width = 10 , height = 5.5 ) 
 
 ```
 
@@ -1428,6 +1590,22 @@ cat(
 )
 ```
 
+```{r}
+
+pred.dTs.hifi.postIntervention %>% 
+       filter( .model %in% 'rain_so', 
+               orgUnitName %in% "Daeyang Luke Hospital" ) %>%  
+       autoplot( color = 'red' , alpha = .5 ) + 
+       autolayer( dTs.new %>% 
+                    filter( period < yearmonth( "2019 Jan") ,
+                            orgUnitName %in% "Daeyang Luke Hospital" ) ,
+                  confCasesNew , 
+                  color = 'black' , alpha = .5 ) +
+       # facet_wrap( ~parentName , scale = 'free' ) +
+       ggtitle( '' ) + guides( color = FALSE )
+
+```
+
 - Evaluate intervention
 
 ```{r hifi.intervention}
@@ -1527,12 +1705,13 @@ plot(hifi.btt)
   d = right_join( hifi.difference.Intervention %>% 
                     ungroup %>%
                     select( orgUnit , percentChange, net ) , 
-                  ous.sf ,
+                  ous.sf %>% filter( level < 5),
                   by = 'orgUnit'
                   ) %>% 
     mutate( Decline = percentChange< 0 ,
             Change = abs( percentChange ))  %>% 
-    st_as_sf
+    st_as_sf %>%
+    filter( ! is.na( net ) & level > 3)
 
   split_geofeatures = split( d , d$net )
     
@@ -1542,7 +1721,19 @@ plot(hifi.btt)
     colors = RColorBrewer::brewer.pal( n_levels, 'Accent')
     
     
+    ggplot() +
+      geom_sf(data = ous.sf %>% select(-parent) %>%
+                filter( level == 3 ) ) +
+      theme_minimal() +
+      geom_sf(data = d , aes( color = net, fill = net ))
     
+
+ggsave( 'MalawiPBO/map.png' )
+```
+
+
+```{r mapView}
+
     m = mapView( split_geofeatures , 
                  col.regions = as.list( colors ) 
                  ) +
@@ -1555,7 +1746,7 @@ plot(hifi.btt)
         filter( st_geometry_type(d) %in% 'POINT' ) , 
       color = 'Decline', radius = 'Change' 
       )
-
+    
 ```
 
 # 19.  Compare results with other methods:

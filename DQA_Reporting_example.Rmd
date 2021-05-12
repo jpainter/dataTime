@@ -1,0 +1,276 @@
+
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, out.width = '100%' , 
+                      comment = '', dpi = 200 ,
+                      ccache = TRUE )
+```
+
+<!-- Libraries and functions -->
+```{r libraries, include= FALSE }
+library(pacman)
+p_load( knitr, scales, tidyverse, readxl, patchwork, 
+        tsibble, fable, fabletools, feasts, slider, anomalize, lubridate ,
+        furrr, tictoc, ggrepel , sf , ggspatial, mdthemes , extrafont , hrbrthemes )
+
+# Run one time on system to install library of fonts...
+# see https://stackoverflow.com/questions/34522732/changing-fonts-in-ggplot2 
+# font_import() 
+
+## NOT RUN ON MAC
+# loadfonts(device = "win")
+
+i = 1
+```
+
+
+# Example
+
+In this example from a West African country*, relevant malaria program data is entered into 11 different forms (or, as they are called in DHIS2, 'datasets').  For each dataset, DHIS2 records how many forms were submitted, how many were expected, and how many were submitted on time.  The data shown below was downloaded on June 3.  
+
+*Regret that this example is a bit odd because there was a strike in 2019 (see green line) but that is data that I happen to have open right now, so it makes for a quick example.
+<!-- ## National #### -->
+
+
+```{r eval=FALSE}
+
+  file = files.national[ i ] 
+
+  # cat( paste( '\n\n\nopening' , i , ":" , file , '\n') )
+  
+  saved.file.name = paste0( dir, file  ) 
+
+  d.national = readRDS( saved.file.name )
+  
+```
+
+```{r test, eval=FALSE }
+
+  
+  df = d.national %>% 
+    filter( dataSet %in% datas[1] ) %>% 
+    mutate( value = as.integer( value ) ,
+            Month = Month_Year( period ) ,
+            month = factor( lubridate::month( Month ) ) ,
+            Year = factor( lubridate::year( Month ) )
+            )   %>%
+  pivot_wider( names_from  = reporting , values_from = value ) %>% 
+  mutate(   
+    Reporting = ACTUAL_REPORTS / EXPECTED_REPORTS , 
+    `Reporting On Time` = ACTUAL_REPORTS_ON_TIME / EXPECTED_REPORTS 
+      ) %>%
+  filter( Year %in% 2018:2020 ) %>%
+  pivot_longer( cols = starts_with( 'Report' ) , names_to = 'Reporting' , values_to = 'Percent' )
+  
+  
+  
+  # single plot 
+  ggplot( df ) +
+    
+    geom_line( 
+      
+      aes( x = month , y = Percent , group = Year , color = Year ) , size = 1
+      )  + 
+    
+    scale_y_continuous(
+      expand = expansion(mult=c(0,0.1) ) ,
+      limits = c( 0 , NA )
+      
+      ) +
+    
+    facet_grid( Reporting ~ .) +
+    
+    md_theme_ipsum( base_size = 8  )
+  
+```
+
+
+```{r}
+
+Month_Year = function( x ){ yearmonth( zoo::as.yearmon( x , "%Y%m") ) }
+
+week_Year = function( x ){ tsibble::yearweek( x ) }
+
+reporting.plots = function( df , 
+                        wrap_nchar = 25 , 
+                        .period = Month , 
+                        base_text = 8 ,
+                        n_col = 3 ,
+                        show.last.month = FALSE 
+                        ){
+  
+  .period = rlang::enquo( .period )
+  
+  datas = unique( df$dataSet )
+  datas = datas[ ! datas %in% 'NA_NA' ]
+
+  plots =   
+    
+    map( datas , ~ {
+      
+      d = df %>% 
+                 filter( dataSet %in% .x 
+                           
+                           ) %>%
+           
+           
+         
+          mutate( 
+                value = as.integer( value ) 
+                ) %>%
+            
+          pivot_wider( 
+            id_cols =  c( dataSet.id , dataSet, period ) ,
+            names_from  = reporting , values_from = value 
+            ) %>% 
+            
+          mutate( 
+        
+            Month = Month_Year( period ) ,
+            month = factor( lubridate::month( Month ) ) ,
+            Year = factor( lubridate::year( Month ) )  ,
+            Reporting = ACTUAL_REPORTS / EXPECTED_REPORTS , 
+            `Reporting On Time` = ACTUAL_REPORTS_ON_TIME / EXPECTED_REPORTS 
+            
+              ) %>%
+              
+          filter( Year %in% 2018:2020 ) %>%
+      
+          pivot_longer( cols = starts_with( 'Report' ) , 
+                        names_to = 'Reporting' , values_to = 'Percent' 
+                        
+                        ) 
+    
+                 
+    g = 
+      
+      ggplot(  ) +
+                 
+      geom_line( 
+          data = d %>% filter( Month <=  Month_Year( Sys.Date() - months( 2 ) )    ) ,
+          aes( x = month , y = Percent , group = Year , color = Year ) , 
+          size = 1
+        )  + 
+      
+                 
+      scale_y_percent( NULL ,
+                       expand = expansion(mult=c(0,0.1) ) ,
+                       limits = c( 0 , NA )
+      
+      ) +
+      
+      scale_color_ipsum() +
+        
+        facet_grid( Reporting ~ . ) +
+        
+        labs( title = .x ,
+              subtitle = 'Percentage of facilities **Reporting** and **Reporting on Time**') +
+        
+        md_theme_minimal( base_size = base_text  ) 
+    
+          # last months
+      if ( show.last.month ){ 
+         g = g  +
+           
+           geom_line( 
+          
+              data = d %>% filter(Month >=  Month_Year( Sys.Date() - months( 2 ) )   ) , 
+              aes( x = month , y = Percent , group = Year  ) ,
+              color = 'grey' , size = 1
+          )
+      }
+    
+      return( g )
+    
+    }
+  
+  )
+  
+  patch.plots = reduce( plots, `+`)
+  
+  patch.plots = patch.plots + 
+       
+      plot_layout( ncol = n_col , guides = "keep") 
+  
+  return( patch.plots )
+  
+}
+```
+
+<!-- Data files -->
+```{r dataFiles , include=FALSE}
+dir = '../dataDictionary/dhis2_dictionary/Formulas/Burkina Faso/'
+
+dir.files = list.files( dir )
+
+files.facility = dir.files[ grepl( 'Formation' , dir.files) & !grepl( 'rda' , dir.files) ]
+
+formula_number = str_split( files.facility , "_") %>% map_chr(2) %>%
+  str_extract(. ,  "[0-9]+") %>% as.integer()
+
+files.facility = files.facility[ order( formula_number )]
+
+files.national = dir.files[ grepl( 'Nation' , dir.files) & !grepl( 'rda' , dir.files)  ]
+
+data.files = c( files.national, files.facility ) 
+
+sf = readRDS( paste0( dir , 'Burkina Faso_geoFeatures_2020-06-02.rds' ))
+st_crs( sf ) <- 4326
+
+sf. = readRDS( paste0( dir , 'newOUS.rds') )
+st_crs( sf.) <- 4326
+```
+
+
+```{r}
+i = {{i}}
+
+formula = str_split( files.facility[ i ] , "_")[[1]][2]
+
+```
+
+# Reporting Rates by Dataset Form 
+
+For each dataset (e.g. data entry form), there are two plots.  Both plots are year over year style, showing the previous two years (brown and green lines) and the current year (black line). 
+
+The top plot is the percent of expected reports that was reported.  you can see that the reporting is down—but is it down because COVID, suggesting a systematic problem not just for reporting but perhaps all services???  I expect that is the conclusion some would make.  In my experience, reporting *always* looks down during the last few months, because it takes many months to get complete data.  Typically, some percentage of clinics report their data ‘on time’, roughly two weeks after end of month, while the rest take many more weeks or months.  One way check this is by looking at Reporting On Time—did the same number of facilities report on time that usually report on time?  If there were a systemic problem, we would expect there to be fewer facilities reporting on time.
+
+The bottom plot is the percent of the expected reports that was reported *on time*, which is typically 15 days after the end of the month. These charts shows that the usual number of facilities reported on time, suggesting that there is no underlying change in reporting. 
+
+Interpretation:  The top chart shows a marked decline in the percent reporting.  However, the bottom plot show that the percent of reports on time is similar to the previous years.  
+
+  
+<!-- ## National #### -->
+
+
+```{r fig.width= 8 , dpi=200 }
+
+  file = files.national[ i ] 
+
+  saved.file.name = paste0( dir, file )
+
+# CHR/CHU 07 Diagnostic et traitement du Paludisme  is duplicated?!
+  d.national = readRDS( saved.file.name ) %>%
+    filter( dataSet.id != 'LLo9ok0sB91'  ) 
+  
+  
+  # displaying value or raw????
+  reporting.plots( d.national , base_text = 5 , show.last.month = FALSE  ) 
+
+  
+```
+  
+Note:  The data above was downloaded in early June, when facilities begin to report May data.  For that reason, the data for May was omitted from the the chart.  The chart below includes the May data (gray line), which is very misleading. Even the on time reports are below normal because this data downloaded too early.  Thus, it is critical to note when the data was downloaded, and in most cases one should omit or ignore data from the previous month. 
+  
+```{r}
+
+  reporting.plots( d.national , base_text = 5 , show.last.month = TRUE  ) 
+  
+```
+  
+
+#  Assessing change among facilities reporting on time
+
+
+

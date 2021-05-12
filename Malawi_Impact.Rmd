@@ -1,10 +1,12 @@
 ---
 title: "Malawi"
-output: 
+output:
   html_document:
-    toc: true
     theme: united
-editor_options: 
+    toc: yes
+  word_document:
+    toc: yes
+editor_options:
   chunk_output_type: inline
 ---
 
@@ -52,7 +54,7 @@ library( scales )
  
 ```{r, datasets}
 
-folder = '../dataDictionary/dhis2_dictionary/Formulas/'
+folder = '../dataDictionary/dhis2_dictionary/Formulas/Malawi/'
 
 
 formulas.file = 'Malawi_Formulas_2020-01-28.xlsx'
@@ -218,7 +220,7 @@ national_annual %>%
         # x = 'Year' , 
         y = 'Cases (Millions) ' ) + 
   geom_abline( aes( intercept = 
-                      mean(national_annual$confCases) , slope = 0 ),
+                      mean( confCases ) , slope = 0 ),
                    color = 'red' ) +
   annotate("text", label = "Mean", x = 2014.5, y = 2.8e6, 
            size = 10, colour = "red" )
@@ -229,17 +231,47 @@ national_annual %>%
 
 ## Monthly cases 
 
-```{r national_monthly_confirmed_cases}
+```{r national_monthly_confirmed_cases , dpi=300 , out.height=5, out.width=8}
 
   datasetTS.0 %>% 
        autoplot( confCases   ) +
-       labs( title = .x ) +
+       labs( title =  'Confirmed malaria cases in children <5 yrs of age' ,
+             y = 'Cases' , x = 'Month' ) +
        guides( color = FALSE ) +
-       theme_bw( base_size = 10 )
+       theme_bw( base_size = 10 ) +
+       expand_limits( y  = 0)
 
 
 ```
 
+```{r fig.height=5, fig.width=8, , dpi=300, out.height=5, out.width=8}
+
+  datasetTS.0 %>% 
+       
+  autoplot( confCases , color = 'brown' , size = 1  ) +
+  
+  scale_y_continuous( labels = unit_format(unit = "M" , scale = 1e-6)
+                     ) +
+  
+  scale_x_date( date_breaks = '1 year', 
+                date_minor_breaks = '2 months', 
+                date_labels = "%b-%Y" ) +
+  
+  expand_limits( y  = 0) + 
+  
+  theme_bw( base_size = 10 ) +
+
+  theme( panel.grid.major = element_blank(),
+         panel.grid.minor = element_blank() 
+            ) +
+ labs( title =  'Following Mass Bednet Distribution, Malaria Cases Declined in 2019' ,
+        subtitle =  'Confirmed malaria cases in children <5 yrs of age' ,
+        caption = 'Cases diagnosed either by health facilities or community health workers' , 
+        x = 'Month' , 
+        y = 'Cases (Millions)\n' )
+
+
+```
 
 ## Monthly cases with counts 
 
