@@ -359,28 +359,11 @@ orgunit.reports = reactive({
   o.r = 
     d %>% as_tibble() %>% ungroup %>%
     
-  #   mutate( 
-  #   
-  #   months12 = 
-  #    case_when(
-  #      Month <= mrm &
-  #        Month > mrm - month(12)  ~ 'Last 12 Months' ,
-  # 
-  #      Month <= (mrm - month(12) ) &
-  #        Month > (mrm - month(12) - month(12) )  ~ 'Previous 13-24 Months' ,
-  # 
-  #        Month <= (mrm - month(12) - month(12)  ) &
-  #        Month > (mrm - month(12) - month(12) - month(12))  ~ 'Previous 25-36 Months' ,
-  # 
-  #      Month <= (mrm - month(12) - month(12) - month(12)  ) &
-  #        Month > (mrm - month(12) - month(12) - month(12) - month(12) )  ~ 'Previous 37-47 Months' ,
-  # 
-  #      TRUE ~ 'Prior'
-  #    ) ,
-  #   
-  #   calendar_year = year( Month ) 
-  #    # use for ordering
-  # ) %>% 
+    mutate(
+
+    calendar_year = year( Month )
+     
+  ) %>%
   rename( year =  {{ year_var }} ) %>%
   group_by( year , orgUnit ) %>%
   summarise( n_months = n_distinct( Month ) 
@@ -415,28 +398,10 @@ orgunit.monthly.reports = reactive({
   o.m.r = 
     d %>% as_tibble() %>% ungroup %>%
 
-    # mutate( 
-    # 
-    #     months12 = 
-    #      case_when(
-    #        Month <= mrm &
-    #          Month > mrm - month(12)  ~ 'Last 12 Months' ,
-    # 
-    #        Month <= (mrm - month(12) ) &
-    #          Month > (mrm - month(12) - month(12) )  ~ 'Previous 13-24 Months' ,
-    # 
-    #          Month <= (mrm - month(12) - month(12)  ) &
-    #          Month > (mrm - month(12) - month(12) - month(12))  ~ 'Previous 25-36 Months' ,
-    # 
-    #        Month <= (mrm - month(12) - month(12) - month(12)  ) &
-    #          Month > (mrm - month(12) - month(12) - month(12) - month(12) )  ~ 'Previous 37-47 Months' ,
-    # 
-    #        TRUE ~ 'Prior'
-    #      ) ,
-  #       
-  #       calendar_year = year( Month ) 
-  #    # use for ordering
-  # )  %>% 
+    mutate(
+           calendar_year = year( Month )
+     
+  )  %>%
   rename( year =  {{ year_var }} ) 
   # %>%
   # mutate( year = factor( year ) )
