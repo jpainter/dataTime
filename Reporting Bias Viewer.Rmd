@@ -128,7 +128,10 @@ Inputs {.sidebar data-width=300}
 ```{r input, echo=FALSE}
 inputPanel(
   textInput( "data.directory", label = "Data directory:", 
-             value = "../dataDictionary/dhis2_dictionary/Formulas/" ) ,
+             value = "../dataDictionary/dhis2_dictionary/Formulas/" ,
+             width = '100%'
+             # , style = "font-size: 50%;"
+             ) ,
   
   selectInput("country", label = "Country:" , 
               choices = c("Burkina Faso", "Guinea", "Malawi" , "Nigeria" ) ,
@@ -203,6 +206,7 @@ formulas =  reactive({
 
   print( 'formula file') ; print( formula.file() )
   
+  if ( !file.exists( formula.file() ) ) return( NULL )
   formulas = read_excel( formula.file() , sheet = 'Formula') %>% 
     filter( !is.na(Formula.Name)) 
   
@@ -228,6 +232,8 @@ dir = reactive({ file.dir( input$country , dir.base = input$data.directory  )  }
 
 country_files = reactive({ 
 
+  
+    if ( !dir.exists( dir() )) return( NULL )
     dir.files = list.files( dir() )
     print( "dir.files : "); # print( dir.files )
     return( dir.files )
@@ -256,7 +262,11 @@ data_file = reactive({
   
   if ( sum( f.indicator ) == 0 ) return( NULL )
   
+  if ( !dir.exists( dir() )) return( NULL )
+  
   data_file = paste0( dir() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
+  
+  if ( !file.exists( data_file )) return( NULL )
 
   print( "data file:" ); print( data_file )
   return( data_file )
@@ -281,6 +291,7 @@ dataset = reactive({
   
   # testing:
   tic()
+  if ( !file.exists( data_file() )) return( NULL )
   dataset =  readRDS( data_file() ) %>% fill_gaps()
   print("done"); toc()
   
@@ -882,11 +893,16 @@ ous.file = reactive({
     f = paste0( dir, most_recent_file( ous.files ) )
     }
   
+    if ( !file.exists( f ) ) return( NULL )
     print( 'ous file:' ) ; print( f )
     return( f )
 })
 
-ous = reactive({  print( 'reading ous file' ) ; readRDS( ous.file() )  })
+ous = reactive({  print( 'reading ous file' ) ; 
+  req( ous.file() )
+  if ( !file.exists( ous.file() ) ) return( NULL )
+  readRDS( ous.file() )  
+  })
 
 levelNames = reactive({ 
   count( ous() %>% as_tibble, levelName ) %>% 
