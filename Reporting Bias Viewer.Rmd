@@ -127,6 +127,9 @@ Inputs {.sidebar data-width=300}
 
 ```{r input, echo=FALSE}
 inputPanel(
+  textInput( "data.directory", label = "Data directory:", 
+             value = "../dataDictionary/dhis2_dictionary/Formulas/" ) ,
+  
   selectInput("country", label = "Country:" , 
               choices = c("Burkina Faso", "Guinea", "Malawi" , "Nigeria" ) ,
               selected = "Malawi" ),
@@ -190,7 +193,8 @@ observeEvent( input$screenshot , {
 
 ```{r Formulas }
 
-formula.file = reactive({ paste0( file.dir( input$country ), 
+formula.file = reactive({ paste0( file.dir( input$country , 
+                                            dir.base = input$data.directory ), 
                                   files('Formula' , country = input$country )[1] )
   })
 
@@ -220,7 +224,7 @@ observe({  updateTextInput( session, 'startingYear' , value  =   min( year(d()$M
 
 ```{r d}
 
-dir = reactive({ file.dir( input$country )  })
+dir = reactive({ file.dir( input$country , dir.base = input$data.directory  )  })
 
 country_files = reactive({ 
 
@@ -864,7 +868,7 @@ output$plotAgregateValue <- renderPlot({  plotAgregateValue()  })
 
 ous.file = reactive({
   req( input$country )
-  dir = file.dir( input$country )
+  dir = file.dir( input$country , dir.base = input$data.directory )
     
   if ( file.exists( paste0( dir , 'newOUS.rds')  ) ){
      
