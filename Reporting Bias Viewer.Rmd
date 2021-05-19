@@ -133,9 +133,11 @@ inputPanel(
              # , style = "font-size: 50%;"
              ) ,
   
-  selectInput("country", label = "Country:" , 
-              choices = c("Burkina Faso", "Guinea", "Malawi" , "Nigeria" ) ,
-              selected = "Malawi" ),
+  selectInput("country", label = "DHIS2 instance (Country) Folder:" , 
+              choices = NULL , 
+              selected = NULL ) , 
+              # choices = c("Burkina Faso", "Guinea", "Malawi" , "Nigeria" ) ,
+              # selected = "Malawi" ),
   
   selectInput("indicator", label = "Indicator:" , 
               choices = NULL , 
@@ -162,6 +164,8 @@ inputPanel(
                value = TRUE  ) ,
   
   checkboxInput( "total", label ='Total all categories', value = FALSE ) ,
+  
+  checkboxInput( "count.any", label ='Count any categories', value = FALSE ) ,
   
   checkboxInput( "mostReports", label ='Most frequently reporting facilities', value = FALSE ) ,
   
@@ -228,7 +232,21 @@ observe({  updateTextInput( session, 'startingYear' , value  =   min( year(d()$M
 
 ```{r d}
 
+observe({
+  req( input$data.directory  )
+  if ( dir.exists( input$data.directory  ) ){ 
+    data.dirs = input$data.directory 
+    print( 'updating country folder' )
+    updateSelectInput( session, 'country' , 
+                       choices =  list.dirs( data.dirs , recursive=FALSE) %>%
+                         basename
+    )
+  }
+} )
+
+
 dir = reactive({ file.dir( input$country , dir.base = input$data.directory  )  })
+
 
 country_files = reactive({ 
 
@@ -280,6 +298,7 @@ dataset = reactive({
   req( data_file() )
   
   print("ingesting..."); 
+  showNotification( "reading data file", type = 'message' )
   
   if (is.null( data_file() ) ) return( NULL )
   
@@ -311,6 +330,8 @@ observe({
   print( 'updating data_choices' )
   updateSelectInput( session, 'data' , choices =   unique( dataset()$data )  ) 
 } )
+
+
 
 
 d = reactive({
@@ -369,7 +390,7 @@ orgunit.reports = reactive({
   
   d = d()
   
-  if ( !input$total )  d = d %>% filter( data %in% input$data )
+  if ( !input$count.any & !input$total  )  d = d %>% filter( data %in% input$data )
   
   o.r = 
     d %>% as_tibble() %>% ungroup %>%
@@ -408,7 +429,7 @@ orgunit.monthly.reports = reactive({
   
   d = d()
   
-  if ( !input$total )  d = d %>% filter( data %in% input$data )
+  if ( !input$count.any & !input$total   ) d = d %>% filter( data %in% input$data )
   
   o.m.r = 
     d %>% as_tibble() %>% ungroup %>%
@@ -486,14 +507,21 @@ selectedOUs <- reactive({
   req( input$startingYear )
   
   if ( input$mostReports ){
-     
-     mr = d() %>% as_tibble %>%
-
+     print( "determining most frequently reported facilities..." ); 
+    
+     if ( !input$count.any & !input$total  ){
+        print( input$total )
+        d = d() %>% filter( data %in% input$data )
+     } 
+      
+     mr = d %>% as_tibble %>%
        filter( year( Month ) >= as.integer( input$startingYear ) ) %>%
        distinct( Month, orgUnit ) %>%
        group_by( orgUnit ) %>%
        summarise( n = n() ) %>%
-       arrange( desc( n ) )
+       arrange( desc( n ))
+     
+     print( mr ); print( summary( mr$n ))
 
      s = mr %>%
        filter( n == max( mr$n ) ) %>%
@@ -901,6 +929,7 @@ ous.file = reactive({
 ous = reactive({  print( 'reading ous file' ) ; 
   req( ous.file() )
   if ( !file.exists( ous.file() ) ) return( NULL )
+  showNotification("reading geo features file")
   readRDS( ous.file() )  
   })
 

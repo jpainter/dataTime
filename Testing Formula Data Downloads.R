@@ -426,7 +426,7 @@ metadata = tibble( `Formula Name` = formula.names[i] ,
                    `Organization Unit Levels` = level ,
                    Requested = download_date )
 formula =  formulas %>% filter( Formula.Name %in% formula.names[i] )
-formulaElements = formula.elements
+formulaElements = formula.elements %>% filter( Formula.Name %in% most_recent_data_files$formula[i] )
 formulaData = dataset
 formulaSummaryDataset = dataset_summary
 
