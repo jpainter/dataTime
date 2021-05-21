@@ -1,0 +1,1690 @@
+---
+title: "Reporting Bias Viewer"
+author: "jp"
+date: "1/4/2021"
+output: 
+  flexdashboard::flex_dashboard:
+    orientation: rows
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+options(shiny.trace=FALSE)
+library(shiny)
+knitr::opts_chunk$set(echo = FALSE)
+source( "data_time_libraries.r")
+
+library(pacman)
+
+pacman::p_load( officer , rvg ,tidyverse, scales, tidyfast, tidytable ,
+        lubridate , anytime, progressr , assertthat  ,
+        readxl, patchwork, cowplot, kableExtra  ,
+        tsibble, fable, fabletools, feasts  , 
+        fable.prophet ,  #fable.bsts  , 
+        slider, anomalize, brolgar   ,
+        tsbox , CausalImpact , tibbletime , dygraphs  , 
+        fpp3  , fabletools  , 
+        furrr, tictoc, magrittr, hrbrthemes, data.tree, igraph  ,
+        sf, mapview, GGally , plotly , sugrrants, lemon , plotly ,
+        shinyscreenshot
+        )
+
+options( dplyr.summarise.inform = FALSE )
+
+## Functions ####
+source( "ingest_formula_data.r")
+source( "formula_files.r" )
+source( "clean_ts.r" )
+source( "outlier.r" )
+source( '../dataTime/Deviation_Expected_Functions.R')
+
+most_recent_file = function( file_list_with_date ){
+  rdsFileSplit = str_split( file_list_with_date, "_")
+  download_date = map( rdsFileSplit ,
+                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  ) %>% map_chr(1) 
+  
+  dates  = map_chr( download_date , ~ anydate(.x)  )
+  
+  if ( identical( dates , character(0) ) ) return( NA )
+  
+  # most recent file 
+  file = file_list_with_date[ which( dates == max(dates, na.rm = T ) ) ]
+  
+  return ( file )
+}
+
+Month_Year = function( x ){ yearmonth( zoo::as.yearmon( x , "%Y%m") ) }
+
+files = function(  search = 'All' , type = 'xlsx' , other = "" , ... ){
+                        
+                      dir = file.dir( ... )
+                      dir.files = list.files( dir )
+                      search_and_type =  
+                          str_detect( dir.files, fixed( search , ignore_case=TRUE )  )  &
+                           grepl( paste0( type , '$' ) , dir.files, 
+                                  ignore.case =  TRUE  ) &
+                          grepl( other , dir.files , ignore.case = TRUE ) 
+                      files = dir.files[  search_and_type   ]
+                      return( files[ rev( order( files )) ]  )
+                      }
+
+file.dir = function( country = country ,
+                     dir.base = '../dataDictionary/dhis2_dictionary/Formulas/' ){
+  paste0( dir.base , country , "/")
+}
+
+most_recent_file = function( file_list_with_date ){
+  rdsFileSplit = str_split( file_list_with_date , "_")
+  download_date = map( rdsFileSplit ,
+                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  ) %>% map_chr(1) 
+  
+  dates  = map_chr( download_date , ~ anydate(.x)  )
+  
+  if ( identical( dates , character(0) ) ) return( NA )
+  
+  # most recent file 
+  file = file_list_with_date[ which( dates == max(dates, na.rm = T ) ) ]
+  
+  return ( file )
+}
+
+# see https://stackoverflow.com/questions/54438495/shift-legend-into-empty-facets-of-a-faceted-plot-in-ggplot2
+shift_legend2 <- function(p) {
+  # ...
+  # to grob
+  gp <- ggplotGrob(p)
+  facet.panels <- grep("^panel", gp[["layout"]][["name"]])
+  empty.facet.panels <- sapply(facet.panels, function(i) "zeroGrob" %in% class(gp[["grobs"]][[i]]))
+  empty.facet.panels <- facet.panels[empty.facet.panels]
+
+  # establish name of empty panels
+  empty.facet.panels <- gp[["layout"]][empty.facet.panels, ]
+  names <- empty.facet.panels$name
+  # example of names:
+  #[1] "panel-3-2" "panel-3-3"
+
+# now we just need a simple call to reposition the legend
+  reposition_legend(p, 'center', panel=names)
+}
+
+shift_legend3 <- function(p) {
+    pnls <- cowplot::plot_to_gtable(p) %>% gtable::gtable_filter("panel") %>%
+      with(setNames(grobs, layout$name)) %>% purrr::keep(~identical(.x,zeroGrob()))
+
+    if( length(pnls) == 0 ) return(p)
+
+    lemon::reposition_legend( p, "center", panel=names(pnls) )
+}
+
+
+```
+
+
+Inputs {.sidebar data-width=300}
+====================================
+
+```{r input, echo=FALSE}
+inputPanel(
+  textInput( "data.directory", label = "Data directory:", 
+             value = "../dataDictionary/dhis2_dictionary/Formulas/" ,
+             width = '100%'
+             # , style = "font-size: 50%;"
+             ) ,
+  
+  selectInput("country", label = "DHIS2 instance (Country) Folder:" , 
+              choices = NULL , 
+              selected = NULL ) , 
+              # choices = c("Burkina Faso", "Guinea", "Malawi" , "Nigeria" ) ,
+              # selected = "Malawi" ),
+  
+  selectInput("indicator", label = "Indicator:" , 
+              choices = NULL , 
+              selected = NULL ) ,
+  
+  selectInput("data", label = "DataElement/Category" , 
+              choices = NULL , 
+              selected = NULL ) ,
+  
+  selectInput("source", label = "Original/Cleaned" , 
+              choices = c( 'Original', 'Cleaned' ) , 
+              selected = 'Original' ) ,
+  
+  selectInput("level", label = "Organization Level:" , 
+              choices = c( 'leaf' ) , 
+              selected = NULL ) , 
+  
+  selectInput("split", label = "Split Data By:" , 
+              choices = "None" , 
+              selected = "None" ) , 
+  
+  
+  checkboxInput( "exclude_recent_month" , label ='Exclude most recent month?',
+               value = TRUE  ) ,
+  
+  checkboxInput( "total", label ='Total all categories', value = FALSE ) ,
+  
+  checkboxInput( "merge", label ='If total, merge datasets first', value = FALSE ) ,
+  
+  checkboxInput( "count.any", label ='Count any categories', value = FALSE ) ,
+  
+  checkboxInput( "mostReports", label ='Most frequently reporting facilities', value = FALSE ) ,
+  
+  textInput( "startingYear", label = "begining with", value = "2017" ) ,
+  
+  actionButton( "screenshot" , "Screenshot" ) ,
+  
+  selectInput("shotSelection", label = "Screenshot Chart:" , 
+              choices = c(NULL, 'plot1', 'plot2', 'map1' , 'plotAgregateValue' ),
+              selected = NULL ) 
+  # checkboxInput( 'calendar_year', "Calendar Year" , value = TRUE )
+)
+
+# testing 
+# country = "Burkina Faso"
+# indicator = "ANC"
+# exclude_recent_month = TRUE
+
+
+```
+
+```{r screenshot}
+
+observeEvent( input$screenshot , {
+  screenshot( id = input$shotSelection, 
+              filename = paste(input$country, input$indicator, 
+                                input$shotSelection,  sep="_"  ) ,
+              scale = 8
+  )
+})
+```
+
+```{r Formulas }
+
+formula.file = reactive({ paste0( file.dir( input$country , 
+                                            dir.base = input$data.directory ), 
+                                  files('Formula' , country = input$country )[1] )
+  })
+
+formulas =  reactive({
+  req( formula.file() )
+
+  print( 'formula file') ; print( formula.file() )
+  
+  if ( !file.exists( formula.file() ) ) return( NULL )
+  formulas = read_excel( formula.file() , sheet = 'Formula') %>% 
+    filter( !is.na(Formula.Name)) 
+  
+  print( 'formulas') ; print( formulas$Formula.Name )
+  
+  return( formulas )
+})
+
+formula.names = reactive({ formulas()$Formula.Name })
+
+formula_elements =  reactive({
+  req( formula.file() )
+  req( input$indicator )
+  
+  read_excel( formula.file() , sheet = 'Formula Elements')  %>%
+    filter( Formula.Name %in% input$indicator )
+
+})
+
+observe({  updateSelectInput( session, 'indicator' , choices =  formula.names() ) } )
+
+observe({  updateSelectInput( session, 'split' , choices =  c('None', names( d() )) ) } )
+
+observe({  updateTextInput( session, 'startingYear' , value  =   min( year(d()$Month)) )  })
+
+```
+
+```{r d}
+
+observe({
+  req( input$data.directory  )
+  if ( dir.exists( input$data.directory  ) ){ 
+    data.dirs = input$data.directory 
+    print( 'updating country folder' )
+    updateSelectInput( session, 'country' , 
+                       choices =  list.dirs( data.dirs , recursive=FALSE) %>%
+                         basename
+    )
+  }
+} )
+
+
+dir = reactive({ file.dir( input$country , dir.base = input$data.directory  )  })
+
+
+country_files = reactive({ 
+
+  
+    if ( !dir.exists( dir() )) return( NULL )
+    dir.files = list.files( dir() )
+    print( "dir.files : "); # print( dir.files )
+    return( dir.files )
+})
+  
+rds_data_file = reactive({
+  req( country_files() )
+  req( input$indicator )
+    
+  dir.files = country_files()
+
+  indicator = input$indicator
+  print( 'indicator:' ); print( input$indicator )
+  
+  file.type = 'rds' # input$file.type 
+  file.other = 'Seasonal_' # input$file.other
+  
+  all.levels.data.files = dir.files[ grepl( 'All levels' , dir.files) &
+                                       grepl( file.type , dir.files) &
+                                       grepl( file.other, dir.files, fixed = TRUE  )]
+
+  print('all levels data files:') ; print( all.levels.data.files )
+  
+  f.indicator = grepl( indicator , all.levels.data.files , fixed = TRUE )
+  print("f.indicator:" ) ;  print( f.indicator ) 
+  
+  if ( sum( f.indicator ) == 0 ) return( NULL )
+  
+  if ( !dir.exists( dir() )) return( NULL )
+  
+  data_file = paste0( dir() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
+  
+  if ( !file.exists( data_file )) return( NULL )
+
+  print( "data file:" ); print( data_file )
+  return( data_file )
+
+})
+
+# xlxs_data_file = reactive({
+#   req( country_files() )
+#   req( input$indicator )
+#     
+#   dir.files = country_files()
+# 
+#   indicator = input$indicator
+#   print( 'indicator:' ); print( input$indicator )
+#   
+#   file.type = 'xlxs' # input$file.type 
+#   file.other = '' # input$file.other
+#   
+#   all.levels.data.files = dir.files[ grepl( 'All levels' , dir.files) &
+#                                        grepl( file.type , dir.files) &
+#                                        grepl( file.other, dir.files, fixed = TRUE  )]
+# 
+#   print('all levels data files:') ; print( all.levels.data.files )
+#   
+#   f.indicator = grepl( indicator , all.levels.data.files , fixed = TRUE )
+#   print("f.indicator:" ) ;  print( f.indicator ) 
+#   
+#   if ( sum( f.indicator ) == 0 ) return( NULL )
+#   
+#   if ( !dir.exists( dir() )) return( NULL )
+#   
+#   data_file = paste0( dir() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
+#   
+#   if ( !file.exists( data_file )) return( NULL )
+# 
+#   print( "data file:" ); print( data_file )
+#   return( data_file )
+# 
+# })
+
+# updateSelectInput( "indicator", choices = )
+
+dataset = reactive({
+  
+  req( rds_data_file() )
+  
+  print("ingesting..."); 
+  showNotification( "reading data file", type = 'message' )
+  
+  if (is.null( rds_data_file() ) ) return( NULL )
+  
+  print( rds_data_file() )
+
+  # testing:
+  tic()
+  if ( !file.exists( rds_data_file() )) return( NULL )
+  
+  # RDS 
+  dataset =  readRDS( rds_data_file() ) 
+  
+  print( "nrow( dataset )" ); print( nrow( dataset ) )
+  print( "add dataset info from formulas")
+  
+  dataset = dataset %>%
+    as_tibble() %>%
+    left_join( formula_elements() %>% 
+                 select( dataElement.id  , dataSet ) %>%
+                 distinct ,  
+               by = 'dataElement.id' )
+  
+  print( "nrow( dataset )" ); print( nrow( dataset ) )
+  print("done"); toc()
+  print( 'glimpse( dataset )' ); 
+    glimpse( dataset )
+  #   glimpse( formula_elements() )
+    
+  return( dataset )
+  
+})  
+
+
+most_recent_month = reactive({
+  mrm = max( dataset()$Month ) 
+  if ( input$exclude_recent_month ) mrm = mrm - month(1)
+  print( 'mrm:') ; # print(mrm)
+  return( mrm )
+})
+
+observe({
+  print( 'updating data_choices' )
+  updateSelectInput( session, 'data' , choices =   unique( dataset()$data )  ) 
+} )
+
+
+d = reactive({
+ req( dataset() )
+ req( input$level )
+  
+  data = dataset()  
+  
+  print( 'nrow( d )' ); print( nrow( data ))
+  
+  if ( input$level %in% 'leaf'){  
+    data = data %>% filter( effectiveLeaf == TRUE )
+  } else {
+    data = data %>% filter( levelName  %in% input$level  )
+  }
+  
+  if ( input$exclude_recent_month ) data = data %>% 
+    filter( Month <= most_recent_month() )
+  
+  if ( input$source %in% 'Original' ){
+    data = data %>% mutate( dataCol = original )
+  }  
+  
+  if ( input$source %in% 'Cleaned' ){
+    print( paste('cleaning removes', sum( data$value , na.rm = T ) - sum( data$seasonal3 , na.rm = T )  , 'data points' ) )
+    data = data %>% mutate( dataCol = ifelse( seasonal3, original, NA  ) )
+
+    print( paste('cleaning changes total by', sum( data$original , na.rm = T ) - sum( data$dataCol , na.rm = T )) )
+  }  
+  
+  # print( 'd: max period ' ); print( max( d$period ))
+  print( 'd: max Month ' ); print( max( data$Month ))
+  
+  # Modify variables used for cleaning data so that FALSE when NA -- meaning it failed prior cleaning step, and TRUE means data is ok
+  if ('mad15' %in% names( data )) data = data %>% mutate( mad15 = ifelse( value & is.na( mad15)|!mad15, FALSE, TRUE ) )
+  if ('mad10' %in% names( data )) data = data %>% mutate( mad10 = ifelse( value & is.na( mad10)|!mad10, FALSE, TRUE ) )
+  if ('mad5' %in% names( data )) data = data %>% mutate( mad5 = ifelse( value & is.na( mad5)|!mad5, FALSE, TRUE ) )
+  if ('seasonal5' %in% names( data )) data = data %>% mutate( seasonal5 = ifelse( value & is.na( seasonal5)|!seasonal5, FALSE, TRUE ) )
+  if ('seasonal3' %in% names( data )) data = data %>% mutate( seasonal3 = ifelse( value & is.na( seasonal3)|!seasonal3, FALSE, TRUE ) )
+    
+  return( data )
+})
+
+
+
+
+
+```
+
+```{r data.reports}
+
+
+orgunit.reports = reactive({ 
+  req( input$data )
+  req( most_recent_month() )
+  
+  mrm = most_recent_month()
+  
+  year_var = 'calendar_year' # ifelse( input$calendar_year , 'calendar_year' , 'months12' )
+  
+  data = d()
+  
+  if ( !input$count.any & !input$total  )  data = data %>% filter( data %in% input$data )
+  
+  o.r = 
+    data %>% as_tibble() %>% ungroup %>%
+    
+    mutate(
+
+    calendar_year = year( Month )
+     
+  ) %>%
+  rename( year =  {{ year_var }} ) %>%
+  group_by( year , orgUnit ) %>%
+  summarise( n_months = n_distinct( Month ) 
+             # , max_month = max( Month ) 
+             ) %>%
+  mutate( n_months = factor( n_months) ,
+          year = factor( year ) )
+  
+  print( 'o.r:') ; # print(head(o.r))
+  return(o.r)
+})
+
+annual.reports = reactive({ 
+  req( orgunit.reports() )
+  
+  orgunit.reports() %>%
+  group_by( year ,  n_months ) %>%
+  summarise( n = n() )
+})
+
+orgunit.monthly.reports = reactive({ 
+  req( input$data )
+  
+  mrm = most_recent_month()
+  
+  year_var = 'calendar_year' # ifelse( input$calendar_year , 'calendar_year' , 'months12' )
+  
+  data = d()
+  
+  if ( !input$count.any & !input$total   ) data = data %>% filter( data %in% input$data )
+  
+  o.m.r = 
+    data %>% as_tibble() %>% ungroup %>%
+
+    mutate(
+           calendar_year = year( Month )
+     
+  )  %>%
+  rename( year =  {{ year_var }} ) 
+  # %>%
+  # mutate( year = factor( year ) )
+  
+  print( 'o.m.r:') ; # print(head(o.m.r))
+  return(o.m.r)
+})
+
+monthly.reports = reactive({ 
+  req( orgunit.monthly.reports() )
+  
+  m.r = orgunit.monthly.reports() %>%
+  group_by( year , Month  ) %>%
+  summarise( n = n_distinct( orgUnit ) )
+  
+  print('m.r') ; # glimpse(m.r)
+  return(m.r)
+})
+
+
+facilities = reactive({
+  req( orgunit.reports() )
+  
+  orgunit.reports() %>%
+  ungroup() %>%
+  summarise( Total = n_distinct( orgUnit ) ) %>%
+  pull( Total)
+})
+
+```
+
+```{r selectedOus }
+
+selected <- reactiveValues( x  = NULL, panel = NULL , chart = NULL )
+
+observeEvent( input$plot1_brush  , {
+  # glimpse( input$plot1_brush )
+  selected$chart = 1
+  
+  selected$x = round( 
+    seq( input$plot1_brush$xmin , input$plot1_brush$xmax , by = .5 )
+  ) %>% unique 
+  
+  selected$panel = input$plot1_brush$panelvar1
+      
+  print( "plot1 selected$x:" ) ;  print( paste( selected$x , selected$panel ) )
+  return( selected )
+})
+
+
+observeEvent( input$plot2_brush  , {
+  # glimpse( input$plot1_brush )
+  selected$chart = 2
+  
+  selected$x = round( 
+    seq( input$plot2_brush$xmin , input$plot2_brush$xmax , by = .5 )
+  ) %>% unique %>% as.integer()
+  
+  selected$panel = input$plot2_brush$panelvar1
+      
+  print( "plot_2_selected$x:" ) ;  print( selected$x ) ; print( selected$panel ) 
+  return( selected )
+})
+
+selectedOUs <- reactive({
+  tic()
+  req( input$startingYear )
+  
+  if ( input$mostReports ){
+     print( "determining most frequently reported facilities..." ); 
+    
+    data = d()
+    
+    if ( !input$count.any & !input$total  ){
+        print( input$total )
+        data = data %>% filter( data %in% input$data )
+     }
+
+     mr = data %>% as_tibble %>%
+       filter( year( Month ) >= as.integer( input$startingYear ) ) %>% distinct( Month, orgUnit ) %>%
+       group_by( orgUnit ) %>%
+       summarise( n = n() ) %>%
+       arrange( desc( n ))
+     
+     print( "mr" ); print( summary( mr$n ) )
+
+     s = mr %>%
+       filter( n == max( mr$n ) ) %>%
+       pull( orgUnit ) %>% unique
+     
+     print( "mostReports selectedOUs:" ); toc() ##print( selectedOUs )
+     return( s )
+     }
+  
+  if( is.null( selected$x ) ) return( NULL )
+  
+  if ( selected$chart == 1 ){
+      select_month =  as.numeric( orgunit.reports()$n_months ) %in% selected$x
+      selectedRows = select_month &
+         orgunit.reports()$year %in% selected$panel 
+      s = orgunit.reports()[ selectedRows, ]$orgUnit %>% unique
+      
+      
+
+    } else {
+      select_month = month( orgunit.monthly.reports()$Month ) %in% selected$x
+      selectedRows = select_month &
+        year( orgunit.monthly.reports()$Month ) %in% selected$panel
+      s = orgunit.monthly.reports()[ selectedRows, ]$orgUnit %>% 
+        unique
+      
+      
+    }
+
+      print( "selected$x selectedOUs:" ); toc()  # print( selectedOUs )
+      return( s )
+    })
+  
+x.annual = reactive({
+  # req( keeprows() )
+  tic()
+  x.a = orgunit.reports() %>% 
+        filter( orgUnit %in% selectedOUs() ) %>%  
+        group_by( year , n_months ) %>%
+        summarise( n =  n_distinct( orgUnit ) )
+  
+  print('x.annual:') ; toc()  # print( x.a )
+  return( x.a )
+  
+})
+
+x.months = reactive({
+  # req( keeprows() )
+  tic()
+  x.m = orgunit.monthly.reports() %>% 
+        filter( orgUnit %in% selectedOUs() ) %>% 
+        group_by( year , Month ) %>%
+        summarise( n = n_distinct( orgUnit ) )
+  
+  print('x.months:') ; toc() # glimpse( x.m )
+  return( x.m )
+  
+})
+
+
+```
+
+
+Reporting 
+====================================
+
+Row 
+-------------------------------------
+  
+
+### Number of Facilties Reporting by Month
+
+```{r}
+plotOutput( 'plot2' , 
+    click = "plot2_click" ,
+    dblclick = "plot2_dblclick" ,
+    hover = "plot2_hover" ,
+    brush = "plot2_brush" )
+
+```
+
+
+```{r plot2 }
+
+plot2 = reactive({
+  req( monthly.reports() )
+  
+  if ( length( monthly.reports()$year) > 0  ) {
+  
+  g = ggplot( monthly.reports() %>% mutate( facilities = 'All' ), 
+              aes( x = month(Month) , y = n  
+                   , group = facilities
+                   , color = facilities 
+                   ) ) +
+    # geom_col() +
+    geom_point( ) +
+    geom_line( ) +
+    geom_hline( yintercept = facilities() ) +
+    facet_wrap( ~ year ) +
+    scale_x_continuous( 'Month' , breaks= 1:12 )  +
+    ylim( 0 , NA ) +
+    scale_color_manual( values = c( 'All' = 'black' , 
+                                    'Selected'= 'brown' ) ) +
+    scale_fill_manual( values = c( 'All' = 'black' , 
+                                    'Selected'= 'brown' ) ) 
+
+  if (!is.null( selectedOUs() ) ){
+    g = g + 
+      # geom_col(  data = x.months() %>% mutate( facilities = 'Selected' )  ) 
+      geom_point( data = x.months() %>% mutate( facilities = 'Selected' ) ) +
+      geom_line( data = x.months() %>% mutate( facilities = 'Selected' ) )
+    }
+  
+  return( shift_legend3(g) )
+  # return( g )
+  }
+})
+
+output$plot2 <- renderPlot({  plot2()  })
+
+```
+
+
+
+```{r plot_brush, eval = FALSE }
+
+verbatimTextOutput("info")
+
+output$info <- renderText({
+    xy_str <- function(e) {
+      if(is.null(e)) return("NULL\n")
+      paste0("x=", round(e$x, 1), " y=", round(e$y, 1), "\n")
+    }
+    
+    xy_range_str <- function(e) {
+      if(is.null(e)) return("NULL\n")
+      paste0("xmin=", round(e$xmin, 1), " xmax=", round(e$xmax, 1), 
+             " ymin=", round(e$ymin, 1), " ymax=", round(e$ymax, 1))
+    }
+
+    paste0(
+      "click: ", xy_str( input$plot1_click ),
+      "dblclick: ", xy_str(input$plot1_dblclick),
+      "hover: ", xy_str(input$plot1_hover),
+      "brush: ", xy_range_str(input$plot1_brush)
+    )
+  })
+
+```
+
+
+```{r html_text, eval=FALSE }
+
+htmlOutput("x_value")
+      
+```
+
+
+```{r selected_text}
+
+ # Print the name of the x value
+  output$x_value <- renderText({
+    
+    if ( input$mostReports ){ 
+      HTML("You've selected <code>" , comma( length( selectedOUs() ) ), "facilities" , 
+           "</code>" )
+    }
+    
+    if ( is.null( selected$x ) ) return("")
+    
+    else {
+      lvls <- levels( annual.reports()$n_months )
+      panel = selected$panel
+      
+      name <- lvls[ round( selected$x ) ]
+      HTML("You've selected <code>" , comma( length( selectedOUs() ) ) , 
+           "</code>" ,
+           "facilities that submitted data for <code>", 
+           paste( name, collapse = "," ) , 
+           "months during", panel , 
+           "</code>" )
+    }
+  })
+
+```
+
+### Histogram of Annual Number of Months Reported
+
+```{r}
+plotOutput( 'plot1' , 
+    click = "plot1_click" ,
+    dblclick = "plot1_dblclick" ,
+    hover = "plot1_hover" ,
+    brush = "plot1_brush" )
+
+```
+
+```{r plot1 }
+
+plot1 = reactive({
+  req( annual.reports() )
+  
+  if ( length( annual.reports()$year) > 0  ) {
+
+  g = ggplot( annual.reports() , 
+              aes( x = n_months , y = n ) ) +
+    geom_col() + 
+    geom_hline( yintercept = facilities() ) +
+    facet_wrap( ~year )
+  
+  if (!is.null( selectedOUs() ) ){
+    g = g + geom_col( data = x.annual() , fill = 'brown' ) 
+  }
+
+  return(g)
+  }
+})
+
+output$plot1 <- renderPlot({  plot1()  })
+
+```
+
+Row 
+-------------------------------------
+  
+
+### Value
+
+
+```{r plotAgregateValue  }
+
+plotOutput( 'plotAgregateValue' ,
+    hover = "plotSelectedOusValues_hover" ,
+    brush = "plotSelectedOusValues_brush"
+    )
+
+plotData = reactive({
+   req( d() )
+  
+    data = d()
+    if ( !input$total )  data = data %>% filter( data %in% input$data )
+    
+    print( paste('original - dataCol = ', sum( data$original , na.rm = T ) - sum( data$dataCol , na.rm = T )) )
+  
+    print( 'plotData filtered by' ); print( input$data )
+    
+    pivot_cols = 'dataCol' 
+    
+    if ( input$split == 'None' ) pivot_cols = c( input$split )
+
+    print( 'nrow( plotData )')  ; print( nrow( data )) 
+    print( 'names( plotData )')  ; print( names( data )) 
+  return( data )
+})
+
+
+group_by_cols = reactive({
+    # req( input$split )
+    group_by_cols =  c( 'Month' ) 
+    if ( input$split != 'None' ) group_by_cols = c( group_by_cols , input$split )
+    return( group_by_cols )
+    
+})
+
+data.total = reactive({
+  req( plotData() )
+  req( group_by_cols() )
+  
+    print( 'data.total group_by_cols:'); print( group_by_cols() )
+    
+  if ( length( group_by_cols() ) < 2  ){
+    
+       key.cols = NULL 
+  } else {
+       key.cols =  rlang::sym( setdiff( group_by_cols() , 'Month' ) )
+  }
+    
+        
+    # d = d %>% as_tibble() %>%
+    # pivot_longer( cols = {{ sym( input$split )}} ) , values_to = 'values' , names_to = 'Source' ) 
+    
+  # Merge ( see note below )
+  # This version combines all categories because the categories may be different 
+  # between datasets. If possible, would be best to compare categories and 
+  # combine by category if possible.  
+  # At present, fails if data not totaled because cant filter input$data
+  if ( input$merge & input$total ){
+    
+
+    dataset_group_by_cols  = rlang::syms( c( group_by_cols() , 
+                                             'orgUnit' , 'dataSet' )
+    )
+
+    combined_group_by_cols  = rlang::syms( c( group_by_cols() , 'orgUnit'  )
+    )
+    
+    data = 
+      plotData() %>% 
+      group_by(  !!! dataset_group_by_cols  ) %>%
+      summarise( dataCol = sum( dataCol , na.rm = TRUE  ) ) %>%
+      group_by(  !!! combined_group_by_cols  ) %>%
+      summarise( dataCol = mean( dataCol , na.rm = TRUE  ) ) %>%
+      mutate( facilities ="All" ,
+              dataSet = 'Combined' ) 
+  } else {
+    data = plotData()
+  }
+  
+    
+    data.total = 
+      data %>% 
+      group_by(  across( all_of( group_by_cols() )) ) %>%
+      summarise( total = sum( dataCol , na.rm = TRUE  ) ) %>%
+      as_tsibble( index = Month, key =  key.cols ) %>%
+      fill_gaps( .full = TRUE  ) %>%
+      mutate( facilities ="All" ,
+              total = replace_na( total , 0) )  # for plotting, replace missing with zero 
+    # print( 'glimpse( data.total )') ; print( glimpse( data.total ))
+    print( 'nrow( data.total )')  ; print( nrow( data.total )) 
+    print( 'names( data.total )')  ; print( names( data.total )) 
+    return( data.total )
+    
+
+})
+
+data.selected = reactive({
+    req( d() )
+    tic()
+  
+    if ( !is.null( selectedOUs() ) ){
+    print( 'plot with selectedOUS' ) 
+    
+    if ( length( group_by_cols() ) < 2  ){
+    
+       key.cols = NULL 
+  } else {
+       key.cols =  rlang::sym( setdiff( group_by_cols() , 'Month' ) )
+  }
+   
+  if ( input$merge & input$total ){
+          
+    dataset_group_by_cols  = rlang::syms( c( group_by_cols() , 
+                                             'orgUnit' , 'dataSet' )
+    )
+
+    combined_group_by_cols  = rlang::syms( c( group_by_cols() , 'orgUnit'  )
+    )
+    
+    data = 
+      plotData() %>% 
+      group_by(  !!! dataset_group_by_cols  ) %>%
+      summarise( dataCol = sum( dataCol , na.rm = TRUE  ) ) %>%
+      group_by(  !!! combined_group_by_cols  ) %>%
+      summarise( dataCol = mean( dataCol , na.rm = TRUE  ) ) %>%
+      mutate( facilities ="All" ,
+              dataSet = 'Combined' )
+  } else {
+    data = plotData()
+  }
+  
+      
+    data.selected =   data %>% 
+      filter( orgUnit %in% selectedOUs()  ) %>%
+      group_by(  across( all_of( group_by_cols() )) ) %>%
+      summarise( total = sum( dataCol , na.rm = TRUE  ) ) %>%
+      as_tsibble( index = Month, key =  key.cols ) %>%
+      fill_gaps( .full = TRUE  ) %>%
+      mutate( facilities ="Selected" ,
+              total = replace_na( total , 0) )
+        
+    print('summarised selected dataCol' )
+    
+  } else {
+    caption.text = NULL 
+    data.selected =  plotData()[0,] %>% 
+      mutate( facilities ="Selected" , Source = 'Orignal' ) %>% 
+      rename( total = dataCol )
+  }
+   
+  print( 'data.selected:' ) ; toc() # glimpse( data.selected )
+  
+  return( data.selected )
+  })
+
+plotAgregateValue = reactive({
+  
+  req( plotData() )
+  req( data.total() )
+  req( input$split )
+  # req( selectedOUs() )
+  # req( data.selected() )
+  
+  data.text = paste( unique( plotData()$data ), collapse = " + " )
+  print( 'data.text'); print( data.text )
+  
+  # caption.text =  paste( comma( length( selectedOUs() ) )  ,
+  #                              'facilities selected' )
+
+  if ( input$split != 'None' ){
+      g = ggplot( data = data.total() ,
+              aes_string( x = 'Month' , y = 'total', color = 'facilities', 
+                   linetype = input$split )
+      )
+    
+  } else {
+      g = ggplot( data = data.total() ,
+              aes( x = Month , y = total, color = facilities ) )
+  }
+  g = g +
+    geom_line() +
+    geom_line(  data = data.selected()  ) +
+    scale_color_manual( values = c( 'All' = 'black' , 
+                                    'Selected'= 'brown' ) ) +
+    labs( y = "" , 
+          title = str_wrap( input$indicator , 30 ) ,
+          subtitle = str_wrap( data.text , 40 ) 
+          # , caption =  str_wrap( caption.text , 50 )
+          ) +
+    theme_minimal()
+
+  return( g )
+})
+
+output$plotAgregateValue <- renderPlot({  plotAgregateValue()  })
+
+```
+
+
+### Map {.no-padding}
+
+
+```{r ous }
+
+ous.file = reactive({
+  req( input$country )
+  dir = file.dir( input$country , dir.base = input$data.directory )
+    
+  if ( file.exists( paste0( dir , 'newOUS.rds')  ) ){
+     
+    f = paste0( dir,'newOUS.rds'  )
+    
+    } else {
+    
+    dir.files = list.files( dir )
+    ous.files = dir.files[ grepl( 'geoFeatures' , dir.files,
+                                              fixed = TRUE  )]
+    print( "ous.files:" ) ; print( ous.files )
+    f = paste0( dir, most_recent_file( ous.files ) )
+    }
+  
+    print( 'ous file:' ) ; print( f )
+    
+    if ( !file.exists( f ) ) return( NULL )
+    
+    return( f )
+})
+
+ous = reactive({  print( 'reading ous file' ) ; 
+  req( ous.file() )
+  if ( !file.exists( ous.file() ) ) return( NULL )
+  showNotification("reading geo features file")
+  tic()
+  o = readRDS( ous.file() )  
+  print( 'finished reading ous file' ) ; toc() 
+  print( 'nrow( ous )' ) ; print( nrow( o ))
+  return( o )
+  })
+
+levelNames = reactive({ 
+  count( ous() %>% as_tibble, levelName ) %>% 
+    arrange( n )
+})
+
+```
+
+```{r eval = FALSE }
+
+  verbatimTextOutput("selected_rows")
+
+  # Print the rows of the data frame which match the x value
+  output$selected_rows <- renderPrint({
+    if ( is.null( selectedOUs() ) ) return()
+    else {
+      head( orgunit.reports() %>% 
+              filter( orgUnit %in% selectedOUs() ), 10) #
+    }
+  })
+```
+
+```{r map1 , eval = TRUE }
+
+plotOutput( 'map1' , 
+    click = "map1_click" ,
+    dblclick = "map1_dblclick" ,
+    hover = "map1_hover" ,
+    brush = "map1_brush" )
+
+
+hf = reactive({ ous() %>% filter( feature %in% "POINT"  ) })
+admins = reactive({ ous() %>% filter( feature %in% c('MULTIPOLYGON', 'POLYGON') ) })
+fs_selected = reactive({ ous() %>% filter( orgUnit %in% selectedOUs() ) })
+
+# split_geofeatures = reactive({ split( ous() ,  ous$levelName ) })
+# levels = names( split_geofeatures )
+# not_all_empty_geo = map_lgl( split_geofeatures ,
+#                                  ~!all(is.na(st_dimension(.x))) )
+map1 = reactive({ 
+  
+  req( admins())
+  req( hf())
+  
+  ggplot( ) + 
+  geom_sf( data = isolate( admins() ) ) +
+  geom_sf( data = isolate( hf() ) , alpha = .25 ) +
+  # geom_sf( data = fs_selected() , color = 'brown' ) +
+  theme_ipsum()
+  
+  
+})
+
+output$map1<-renderCachedPlot({ map1() } ,
+                              cacheKeyExpr = { list( input$country , fs_selected() ) } ) 
+
+```
+
+```{r leaflet , eval = FALSE }
+library( leaflet )
+leafletOutput( 'map1' )
+
+map1 = reactive({ 
+    split_geofeatures = split( ous() ,  ous()$levelName )
+    
+    levels = names( split_geofeatures )
+    
+    # fs = ous  
+    
+    # mapview( fs )
+    
+    # # test for empty geometry
+    not_all_empty_geo = map_lgl( split_geofeatures ,
+                                 ~!all(is.na(st_dimension(.x))) )
+    # 
+    # # print( paste( 'not_all_empty_geo: ', not_all_empty_geo ) )
+    # 
+    # print( levels )
+    # 
+    n_levels = sum( not_all_empty_geo )
+    # 
+    colors = RColorBrewer::brewer.pal(n_levels, 'Pastel1')
+    names( colors ) = levels[ not_all_empty_geo ]
+    # colors = topo.colors(10)[ n_levels ] 
+    # 
+    # 
+    m_list = map( levels[ not_all_empty_geo ] ,
+                  ~ mapView( split_geofeatures[ .x ] ,
+                            col.regions = colors[ .x ]
+                  ) )
+
+    m = reduce( m_list , `+`)
+
+    m@map
+})
+
+output$map1<-renderLeaflet({ map1() } ) 
+```
+
+```{r map_brush, eval=FALSE }
+verbatimTextOutput("Map.info")
+
+output$Map.info <- renderText({
+    xy_str <- function(e) {
+      if(is.null(e)) return("NULL\n")
+      paste0("x=", round(e$x, 1), " y=", round(e$y, 1), "\n")
+    }
+    
+    xy_range_str <- function(e) {
+      if(is.null(e)) return("NULL\n")
+      paste0("xmin=", round(e$xmin, 1), " xmax=", round(e$xmax, 1), 
+             " ymin=", round(e$ymin, 1), " ymax=", round(e$ymax, 1))
+    }
+
+    paste0(
+      "click: ", xy_str( input$map1_click ),
+      "dblclick: ", xy_str(input$map1_dblclick),
+      "hover: ", xy_str(input$map1_hover),
+      "brush: ", xy_range_str(input$map1_brush)
+    )
+  })
+```
+
+
+Quality
+====================================
+
+Row
+-------------------------------------
+
+
+```{r print_mad, include = FALSE , eval=FALSE }
+
+htmlOutput("mad_value")
+
+ # Print the MAD value
+  output$mad_value <- renderText({
+    
+    req( input$mad )
+    
+
+      HTML("You've selected a MAD cutoff <code>", 
+           input$mad, 
+           "for extreme values", 
+           "</code>")
+
+  })
+
+
+```
+
+
+### Extreme Outliers 
+
+```{r dTs.extreme, eval=FALSE }
+
+
+
+pb = NULL
+# .total = reactive({ length( key_size( dTs() ) ) })
+# pb <- progress_bar$new( 
+#     format = ":current :percent  [:bar] :elapsedfull",
+#     total = .total() , clear = FALSE, width= 50 )
+
+mad = reactive({ input$mad })
+
+dTs.extreme = reactive({ 
+  
+  print( 'dTs.extreme ... ' )
+  print( paste( 'MAD is ', mad() ) )
+  
+  dtse = 
+    d() %>%
+    filter( orgUnit %in% selectedOUs() ) %>%
+    as_tsibble( index = period, key = orgUnit ) %>% 
+    pivot_wider( id_cols = c( orgUnit , period ) , 
+                 names_from = "vars", 
+                 values_from = "dataCol" ) %>%
+    group_by( orgUnit ) %>% 
+    mutate( across( all_of( dataCols$x ) , 
+
+                                ~clean_ts( . ,
+                      interpolate = FALSE ,
+                      .clean = "MAD" ,
+                      MAD = as.numeric( mad() ) # median absolute deviation > 5
+                      , .pb = pb
+                      )  
+                    # , otherwise = NA )
+    ) 
+           
+    ) 
+  
+  # %>% 
+  # 
+  #   pivot_longer( {{ dataCols$x }} ,
+  #                 names_to =  'vars' ,
+  #                 values_to = 'cleanEO' )
+  
+  # glimpse( dtse )
+  print( 'dTs.extreme ... finished' )
+  return( dtse )
+})
+
+```
+
+
+```{r dTs.extreme.total , eval=FALSE}
+
+dTs.extreme.total = reactive({
+  
+  
+  dTs.extreme() %>% 
+    ungroup() %>%
+    summarise( across( all_of(  dataCols$x ) , sum, na.rm = TRUE ) )
+  
+})
+
+```
+
+
+```{r plot_mad, eval=FALSE}
+
+plotOutput( 'plot_mad' , 
+    click = "plot_mad_click" ,
+    dblclick = "plot_mad_dblclick" ,
+    hover = "plot_mad_hover" ,
+    brush = "plot_mad_brush" )
+
+plot_mad = reactive({
+  
+  if ( !is.character( dataCols$x ) ) return()
+  
+  g = ggplot( dTs.extreme.total() %>% 
+                pivot_longer( dataCols$x  ,
+                  names_to =  'vars' ,
+                  values_to = 'cleanEO' ) ,
+              aes( x = period , y = cleanEO ) ) +
+    facet_wrap( ~ vars , scales = 'free' ) +
+    geom_line()
+
+  return(g)
+})
+
+output$plot_mad <- renderPlot({  plot_mad()  })
+```
+
+Row
+-------------------------------------
+
+### STL Outliers 
+
+```{r dTs.stl , eval=FALSE}
+
+
+pb = NULL
+# pb <- progress_bar$new( 
+#     format = ":current :percent  [:bar] :elapsedfull",
+#     total = .total() , clear = FALSE, width= 50 )
+
+mad = reactive({ input$mad })
+
+dTs.stl = reactive({ 
+  
+  print( 'dTs.stl ... ' )
+
+  dtsstl =  
+    dTs.extreme() %>% 
+    filter( orgUnit %in% unique( dTs.extreme()$orgUnit )[] ) %>%
+    group_by( orgUnit ) %>% 
+    mutate( across( all_of( dataCols$x ) , 
+
+            ~clean_ts( . ,
+                      interpolate = FALSE ,
+                      .clean = 'tsclean' ,
+                      MAD = as.numeric( mad() ) # median absolute deviation > 5
+                      , .pb = pb
+                      )  
+                    # , otherwise = NA )
+    ) 
+    )
+  
+  # glimpse( dtsstl )
+  print( 'dTs.stl ... finished' )
+  return( dtsstl )
+})
+
+```
+
+
+```{r dTs.stl.total , eval=FALSE}
+
+dTs.stl.total = reactive({
+  
+  
+  dTs.stl() %>% 
+    ungroup() %>%
+    summarise( across( all_of(  dataCols$x ) , sum, na.rm = TRUE ) )
+  
+})
+
+```
+
+
+```{r plot_dTs.stl , eval=FALSE}
+
+plotOutput( 'plot_dTs.stl' , 
+    click = "plot_dTs.stl_click" ,
+    dblclick = "plot_dTs.stl_dblclick" ,
+    hover = "plot_dTs.stl_hover" ,
+    brush = "plot_dTs.stl_brush" )
+
+plot_dTs.stl = reactive({
+  
+  if ( !is.character( dataCols$x ) ) return()
+  
+  g = ggplot( dTs.stl.total() %>% 
+                pivot_longer( dataCols$x  ,
+                  names_to =  'vars' ,
+                  values_to = 'cleanEO' ) ,
+              aes( x = period , y = cleanEO ) ) +
+    facet_wrap( ~ vars , scales = 'free' ) +
+    geom_line()
+
+  return(g)
+})
+
+output$plot_dTs.stl <- renderPlot({  plot_dTs.stl()  })
+```
+
+
+Trend / Evaluation 
+====================================
+
+Row 
+-------------------------------------
+
+### Intervention Date
+
+```{r}
+
+  dates = reactive({ 
+    req( data.total() )
+    unique( data.total()$Month )  
+    })
+
+
+selectInput("evaluation_month", label = "Starting evaluation:" , 
+              choices = NULL , 
+              selected = NULL ) 
+
+selectInput("horizon", label = "Evaluation period (months):" , 
+              choices = c(3,6,12,18,24) , 
+              selected = 12 ) 
+
+
+checkboxInput( "selected" , label ='Show selected facilities',
+               value = TRUE  ) 
+
+```
+
+### Forecast Model
+
+```{r}
+
+checkboxInput( "smooth" , label ='Show smoothed trend line (loess)',
+               value = FALSE  ) 
+
+checkboxInput( "pre_evaluation" , label ='Show predicted values during during year prior to intervention (to gauge accuracy of time-series model)',
+               value = FALSE  ) 
+
+
+checkboxInput( "evaluation" , label ='Show predicted values during evaluation period (assuming no intervetion)',
+               value = FALSE  ) 
+
+selectInput("model", label = "Time-series model:" , 
+              choices = c('ARIMA', 'Prophet') , 
+              selected = 'ARIMA'  ) 
+
+
+```
+
+Row 
+-------------------------------------
+
+### Impact
+
+```{r forecast_plot}
+
+observe({  updateSelectInput( session, 'evaluation_month' , 
+                              choices = dates() , 
+                              selected = max( dates() ) - month(12) ) # 12 months before latest date
+  } )
+            
+
+trendData = reactive({
+
+  if (input$selected & !is.null( selectedOUs() ) ){
+    .data = data.selected()
+  } else {
+    .data = data.total()
+  }
+  
+  print( 'trend data:'); # glimpse( .data )
+  return( .data )
+})
+
+
+
+plotOutput( 'plotTrends'
+    # , hover = "plotTrends_hover" ,
+    # , brush = "plotTrends_brush" ,
+    # , click = "plotTrends_click" ,
+    # , dblclick = "plotTrends_dblclick"
+    )
+
+evaluationParameters <- reactiveValues( Month  = NULL )
+
+# observeEvent( input$plotTrends_brush  , {
+# 
+#   req( input$plotTrends_brush )
+#   
+#   
+#   x = brushedPoints( data.total() %>% as_tibble , input$plotTrends_brush  ) 
+#   
+#   # evaluationParameters$Month =  nearPoints( plotData(), input$plotTrends_dblclick , 
+#   #                               threshold = 10 ) %>%
+#   #   min( Month )
+#   
+#   print( "plotTrends_dblclick$x:" ) ;  print( x ) 
+#   
+#   # return( evaluationParameters )
+# })
+
+tsModel = reactive({
+  req( trendData() )
+  req( input$evaluation_month )
+  
+  fit.data  = trendData() %>%
+    filter_index( ~ as.character( yearmonth( input$evaluation_month  ) - 1 ) )
+  
+  if (input$model %in% 'ARIMA' ){
+    fit = fit.data %>% model( a = ARIMA( total ) )
+    return( fit )
+  } 
+  
+  if (input$model %in% 'Prophet' ){
+    fit =  fit.data %>% model( 
+            prophet = prophet( total ~
+
+                                    growth( type = 'logistic',
+                                            changepoint_range = 1 ,
+                                            changepoint_prior_scale = 1 ,
+                                            capacity = 1e5 ,
+                                            floor = 0 ) +
+                                    season(period=12, 
+                                           order = 4 ,
+                                           type='multiplicative'),
+                               seed = TRUE)
+        )
+   
+    print( 'model fit' )
+    return( fit )
+  } 
+  
+})
+
+tsPreModel = reactive({
+  req( trendData() )
+  req( input$evaluation_month )
+  
+
+  fit.data  = trendData() %>%
+    filter_index( ~ as.character( yearmonth( input$evaluation_month  ) - 13 ) )
+  
+
+   if (input$model %in% 'ARIMA' ){
+    fit = fit.data %>% model( 
+      arima = ARIMA( fabletools::box_cox( total , lambda = .5  ) ~
+                                    pdq( 0:2, 0:1, 0:2 ) +
+                       PDQ( 0:2, 0:1, 0:2 ,  period = 12 )  )
+      )
+  } 
+  
+  if (input$model %in% 'Prophet' ){
+    fit =  fit.data %>% model( 
+            prophet = prophet( total ~
+
+                                    growth( type = 'logistic',
+                                            changepoint_range = 1 ,
+                                            changepoint_prior_scale = 1 ,
+                                            capacity = 1e5 ,
+                                            floor = 0 ) +
+                                    season(period=12, 
+                                           order = 4 ,
+                                           type='multiplicative'),
+                               seed = TRUE)
+        )
+  }
+
+  print( 'pre fit' ); # glimpse( fit )
+  return( fit )
+  
+})
+
+tsForecast = reactive({ 
+  
+  req( tsModel() ) 
+  req( input$horizon )
+  
+  fcast = tsModel() %>% forecast( h = as.numeric( input$horizon ) )
+  print( 'fcast' ); # glimpse( fcast )
+  return( fcast )
+  })
+
+tsPreForecast = reactive({ 
+  
+  req( tsPreModel() ) 
+  req( input$horizon )
+  
+  fcast = tsPreModel() %>% forecast( h = 12 )
+  print( 'pre-fcast' ) ; # glimpse( fcast )
+  return( fcast )
+  })
+
+MAPE = reactive({
+  req( tsPreForecast() ) 
+  print('MAPE')
+  predicted = tsPreForecast() %>% as_tibble() %>% select(-total)
+  actual =  trendData() 
+  d = predicted %>%
+     inner_join( actual , by = 'Month' ) 
+ 
+  e = d %>% as_tibble() %>%
+        # group_by( orgUnit , data  )  %>%
+        summarise( 
+          mape = ifelse( mean( total , na.rm = T ) > 0 ,
+                       mean( abs( total - .mean ) , na.rm = T ) / 
+                       mean( total , na.rm = T ) ,
+                       NA ) 
+                   ) 
+  print( "MAPE"); print( e$mape)
+  return( scales::percent( e$mape )  )
+  
+})
+
+MPE = reactive({
+  req( tsForecast() ) 
+
+  print('MPE')
+  predicted = tsForecast() %>% as_tibble() %>% select(-total)
+  actual =  trendData() 
+  d = predicted %>%
+     inner_join( actual , by = 'Month' ) 
+ 
+  e = d %>% as_tibble() %>%
+        # group_by( orgUnit , data  )  %>%
+        summarise( 
+          mpe = ifelse( mean( total , na.rm = T ) > 0 ,
+                       mean( total - .mean  , na.rm = T ) / 
+                       mean( total , na.rm = T ) ,
+                       NA ) 
+                   ) 
+  
+  print( "MPE"); print( e$mpe)
+  return( scales::percent( e$mpe )  )
+  
+})
+
+
+
+plotTrends = reactive({
+  
+  req( trendData() )
+  # req( data.total() )
+  req( input$split )
+
+  
+  # caption.text =  paste( comma( length( selectedOUs() ) )  ,
+  #                              'facilities selected' )
+  
+  data.text = paste( unique( plotData()$data ), collapse = " + " )
+  print( 'data.text'); print( data.text ); # glimpse( trendData() )
+
+  if ( input$split != 'None' ){
+      g = ggplot( data = trendData() ,
+              aes_string( x = 'Month' , y = 'total', color = 'facilities', 
+                   linetype = input$split )
+      )
+    
+  } else {
+      g = ggplot( data = trendData() %>% as_tibble ,
+              aes( x = Month , y = total, color = facilities ) )
+  }
+  g = g +
+    geom_point( ) + 
+    geom_line( alpha = .75 ) +
+    # geom_line(  data = data.selected() ,  alpha = .75  ) +
+    scale_x_yearmonth(date_breaks="6 months" ) +
+    scale_y_continuous( label=comma ) +
+    scale_color_manual( values = c( 'All' = 'black' , 
+                                    'Selected'= 'brown' ) ) +
+    ylim( 0 , NA ) +
+    labs( y = "" , x="" ,
+          title = str_wrap( input$indicator , 100 ) ,
+          subtitle = str_wrap( data.text , 100 ) 
+          # , caption =  str_wrap( caption.text , 50 )
+          ) +
+    theme_minimal()
+  
+  if (input$evaluation) g = g + 
+    geom_line( data = tsForecast(), aes( y = .mean ) ,   color = 'blue' , alpha = .5 ) +
+    geom_vline( xintercept = as.Date(yearmonth( input$evaluation_month  )) , color = 'black', alpha = .25 ) +
+    annotate( "text" ,
+              x = as.Date(yearmonth( input$evaluation_month  ) ) ,
+              y = 10 ,
+              hjust = 0, 
+              label = paste( "Mean Percent Error:", MPE() ) )
+  
+  if (input$pre_evaluation) g = g + 
+    geom_line( data = tsPreForecast(), aes( y = .mean ) ,   color = 'light blue', alpha = 1 ) +
+    geom_vline( xintercept = as.Date(yearmonth( input$evaluation_month  ) - month(12)) , color = 'brown' , alpha = .25 ) +
+    annotate( "text" ,
+              x = as.Date(yearmonth( input$evaluation_month  ) - month(12)) ,
+              y = 10 ,
+              hjust = 1 ,
+              label = paste( "Mean Absolute Percent Error:", MAPE() ) )
+  
+  if (input$smooth) g = g + 
+    geom_smooth( data = trendData() %>% as_tibble , alpha = .25 )
+
+  # return( ggplotly( g ) )
+  return( g )
+})
+
+# output$plotTrends <- renderPlotly({  plotTrends()  })
+output$plotTrends <- renderPlot({  plotTrends()  })
+
+```
+

@@ -1,0 +1,284 @@
+---
+output:
+  word_document: default
+  html_document: default
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, out.width = '100%' , fig.width = 8 ,
+                      comment = '', dpi = 200 ,
+                      cache = FALSE )
+```
+
+
+<!-- Libraries and functions -->
+```{r libraries}
+library(pacman)
+p_load( knitr, scales, tidyverse, readxl, patchwork, 
+        tsibble, fable, fabletools, feasts, slider, anomalize, lubridate ,
+        furrr, tictoc, ggrepel , sf , ggspatial, mdthemes , extrafont ,
+        hrbrthemes ,tidyfast , progressr, gt , rlist )
+
+# dplyr option to set summarise grouping behavior (as 'keep')
+options( dplyr.summarise.inform = FALSE )
+```
+
+
+<!-- Data files -->
+```{r dataFiles , include=FALSE}
+dir = '../dataDictionary/dhis2_dictionary/Formulas/Burkina Faso/'
+
+dir.files = list.files( dir )
+
+files.facility = dir.files[ grepl( 'Formation' , dir.files) & !grepl( 'rda' , dir.files) ]
+
+files.levels = dir.files[ grepl( 'level' , dir.files) & !grepl( 'rda' , dir.files) ]
+
+formula_number = str_split( files.facility , "_") %>% map_chr(2) %>%
+  str_extract(. ,  "[0-9]+") %>% as.integer()
+
+files.facility = files.facility[ order( formula_number )]
+
+files.national = dir.files[ grepl( 'Nation' , dir.files) & !grepl( 'rda' , dir.files)  ]
+
+data.files = c( files.national, files.facility ) 
+
+sf = readRDS( paste0( dir , 'Burkina Faso_geoFeatures_2020-06-02.rds' ))
+st_crs( sf$geometry ) <- 4326
+
+sf. = readRDS( paste0( dir , 'newOUS.rds') )
+st_crs( sf.) <- 4326
+```
+
+```{r}
+
+options(dplyr.summarise.inform = FALSE)
+
+# i = {{i}}
+
+i = 9
+
+formula = str_split( files.facility[ i ] , "_")[[1]][2]
+
+```
+
+<!-- `r formula`  -->
+
+```{r }
+  
+  file = files.levels[ 1 ] 
+
+  # cat( paste( '\n\n\nopening' , i , ":" , file , '\n') )
+  
+  saved.file.name = paste0( dir, file , ".rda" ) 
+
+  load( saved.file.name )
+ 
+
+```
+
+<!-- reporting rates... -->
+
+```{r}
+
+xls.facility = dir.files[ grepl( file , dir.files) & 
+                            !grepl( '.xlsx.' , dir.files) ]
+
+datasets = read_excel( paste0( dir, xls.facility ) , 
+                      sheet = 'Formula Elements' ) %>%
+  pull( dataSet ) %>% unique %>% str_split(";") %>% 
+  list.extract(1) %>%
+  str_replace( "\n" , "")
+
+reporting = readRDS( paste0( dir, files.national[1] ) ) 
+
+r.n = reporting %>%
+  select( dataSet, period, reporting, value ) %>%
+  unique() %>% # for some reasoan, one dataset is duplicated
+  mutate( value = as.integer( value )) %>%
+  pivot_wider( id_cols = c( dataSet , period) ,  names_from = reporting, 
+               values_from = value ) 
+
+
+r.n.rates = r.n %>% 
+  filter( dataSet %in% datasets ) %>%
+  mutate(
+    Year = year( yearmonth( period )) ,
+    formReporting = ACTUAL_REPORTS / EXPECTED_REPORTS ) %>%
+  select(-period) %>%
+  group_by( dataSet, Year ) %>% 
+  summarise_all(  mean ) 
+  
+biggest_dataset = r.n.rates %>% arrange( EXPECTED_REPORTS ) %>% tail(1) %>% pull(dataSet)
+
+form_reporting = 
+  r.n.rates %>% filter( dataSet %in% biggest_dataset ) %>% 
+  ungroup %>%
+  rename( formActual = ACTUAL_REPORTS ,
+          formExpected = EXPECTED_REPORTS ) %>%
+  select( Year, formActual, formExpected , formReporting )
+
+```
+
+<!-- count data -->
+```{r}
+dataReporting  = read_excel( paste0( dir, xls.facility ) , 
+                      sheet = 'summaryData' ) %>%
+  mutate( Year = year( yearmonth( period )) ) %>%
+  group_by( orgUnit, Year) %>%
+  summarize( 
+    allData = sum( Count.min ) ,
+    someData = sum( Count.max ) ,
+    months = n()
+    ) %>% 
+  group_by( Year ) %>%
+  summarise(
+        # allFacilities = n_distinct( orgUnit ) ,
+        meanAllData = sum( allData ) / max( months ) , 
+        meanSomeData = sum( someData ) / max( months )  , 
+        
+        dataFacilities = sum( someData > 0 ) ,
+        dataAllMonths= sum( someData == max( someData ) ) ,
+        dataNoMonths = sum( someData == 0 ) ,
+        dataMeanMonths = mean( someData ) 
+    )
+
+```
+
+```{r}
+
+reporting = inner_join( dataReporting , form_reporting , by = "Year") %>%
+  mutate( dataReporting = meanSomeData / formExpected  )
+
+
+reporting_tab_rtf <- 
+  reporting %>%
+  gt(  ) %>%
+  tab_spanner(label = "Forms", columns = matches("form")) %>%
+  tab_spanner(label = "Data", columns = matches("data")) %>%
+  cols_move_to_start( columns = vars(Year, formActual, formExpected, formReporting )) %>%
+
+  fmt_number(columns = starts_with('form'), decimals = 0 ) %>%
+  fmt_number(columns = starts_with('data') , decimals = 0 ) %>%
+  fmt_number(columns = matches('mean') , decimals = 1 ) %>%
+  fmt_percent(columns = ends_with( 'reporting' ), decimals = 1) %>%
+  
+  tab_header(
+    title = md(formula),
+    subtitle = "Reporting rates for submitting form and for reporting data in the form"
+  ) 
+  
+  gtsave( reporting_tab_rtf, "reporting.png", vwidth = 8*200 )
+```
+
+
+
+```{r}
+harmonic_mean = function( x ){
+    1 / mean( 1/x, na.rm = TRUE )
+}
+
+# https://stackoverflow.com/questions/2602583/geometric-mean-is-there-a-built-in
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+```
+
+```{r include=FALSE}
+
+Annual_Error_Rates  = fms_summary %>% # View
+    mutate( MhAPE = ifelse( is.nan(MhAPE) | MhAPE %in% Inf , NA, MhAPE ) ) %>% 
+    as_tibble() %>%
+    group_by( Year ) %>%
+    summarise( 
+        nData = sum(n) ,
+        total_raw = sum( total_raw ) , 
+        nOutlier = sum( total_outlier != 0 ) ,
+        total_outlier = sum( total_outlier ) , 
+        nInterp = sum( total_interp!= 0  ) ,
+        total_interp = sum( total_interp ) , 
+        # mpe = mean( MhAPE , na.rm = TRUE ) ,
+        # gmpe = gm_mean( MhAPE )  ,
+        Percent_Error = gm_mean( MgAPE ) ,
+        # Percent_Error = mean( MhAPE , na.rm = T )
+    ) %>%
+    mutate( 
+        `percOutlier` = total_outlier / total_raw  ,
+        `percInterp.` = total_interp / total_raw ,
+        `Estimated` = total_raw - total_outlier + total_interp ,
+        `Est./Reported` = Estimated / total_raw
+    ) %>%
+  rename( Reported = total_raw )
+
+tab_rtf <- 
+  Annual_Error_Rates %>%
+  gt(  ) %>%
+  tab_spanner(label = "Reported", columns = matches("report")) %>%
+  tab_spanner(label = "Consistency", columns = matches("error")) %>%
+  tab_spanner(label = "Missingness", columns = matches("inter")) %>%
+  tab_spanner(label = "Outliers", columns = matches("outlier")) %>%
+  tab_spanner(label = "Estimated Total", columns = vars(
+    Estimated,`Est./Reported` )) %>%
+
+  fmt_number(columns = matches(paste(c('total','Reported', 'Estimated','n') ,
+                                     collapse="|") ) ,
+             decimals = 0 ) %>%
+  fmt_number(columns = contains('Est.'), decimals = 2 ) %>%
+  fmt_number(columns = c(ends_with( 'e' ), starts_with('avg')) , decimals = 1 ) %>%
+  fmt_percent(columns = starts_with( 'perc' ), decimals = 1) %>%
+  tab_header(
+    title = md(formula),
+    subtitle = "Outliers, Missingness, and Annual Error Rates"
+  ) %>%
+  tab_source_note(md( "Results are averaged across all facilities reporting.")) 
+  
+  
+  gtsave( tab_rtf, "table.png", vwidth = 8*200 )
+
+```
+
+![](table.png)
+
+
+```{r, eval=FALSE}
+
+d = inner_join( Annual_Error_Rates, dataReporting , by = "Year" ) %>%
+  select(  formActual, formExpected , formReporting ,
+        nData ,
+        dataFacilities  ,
+        dataAllMonths  ,
+        dataNoMonths,
+        dataAvgNo.Months ) 
+
+
+  
+  
+```
+
+<!-- ![](reporting.png) -->
+
+```{r eval = FALSE }
+
+# MhAPE
+Annual_faciltiy_Error_Rates  = fms_summary %>% # View
+    mutate( MhAPE = ifelse( is.nan(MhAPE) | MhAPE %in% Inf , NA, MhAPE ) ) %>% 
+    as_tibble() %>%
+    group_by( orgUnit, Year ) %>%
+    summarise( 
+        total_raw = sum( total_raw ) , 
+        total_outlier = sum( total_outlier ) , 
+        total_interp = sum( total_interp ) , 
+        # Pecent_Error = harmonic_mean( MhAPE ) ,
+        Percent_Error = mean( MhAPE , na.rm = T )
+    ) %>%
+    mutate( 
+        Percent_Outlier = total_outlier / total_raw  ,
+        Percent_Potentially_Missing = total_interp / total_raw ,
+        error = cut( Percent_Error, breaks = c( 0,.1, .2, .3, .4, .5, Inf ) )
+        )
+
+kable( Annual_faciltiy_Error_Rates )
+
+```
+

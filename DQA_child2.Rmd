@@ -1,0 +1,584 @@
+
+
+```{r}
+
+options(dplyr.summarise.inform = FALSE)
+
+i = {{i}}
+
+formula = str_split( files.facility[ i ] , "_")[[1]][2]
+
+```
+
+```{r }
+
+
+Month_Year = function( x ){ yearmonth( zoo::as.yearmon( x , "%Y%m") ) }
+
+week_Year = function( x ){ tsibble::yearweek( x ) }
+
+patch.plots = function( df , 
+                        wrap_nchar = 25 , 
+                        .period = Month , 
+                        base_text = 8 ,
+                        n_col = 3 ){
+  
+  .period = rlang::enquo( .period )
+  
+  datas = unique( df$data )
+  datas = datas[ ! datas %in% 'NA_NA' ]
+  
+  plots = map( datas , ~ df %>% 
+                 filter( data %in% .x ) %>%
+                 ggplot( ) +
+                 geom_line( 
+                   if ( .x %in% 'Total' ){
+                     aes( x = !! .period , y = value , group = Method ,
+                          color = Method ) 
+                   } else {
+                     aes( x = !! .period , y = value , group = data ) 
+                   }
+                   
+                   )  + 
+                 scale_y_continuous(
+                   expand = expansion(mult=c(0,0.1) ) ,
+                   limits = c( 0 , NA )
+                 ) +
+                   
+                 theme_minimal( base_size = base_text ) +
+                   
+                 facet_grid( name  ~ data  , scales = 'free', 
+                             labeller = labeller( data = label_wrap_gen( wrap_nchar ))
+                 )
+  )
+  
+  
+  patch.plots = reduce( plots, `+`)
+  
+  patch.plots = patch.plots + 
+       
+  plot_layout(ncol = n_col , guides = "keep") 
+  
+  return( patch.plots )
+}
+```
+
+# `r formula`
+
+```{r eval = FALSE }
+
+  file = files.national[ i ] 
+
+  # cat( paste( '\n\n\nopening' , i , ":" , file , '\n') )
+  
+  saved.file.name = paste0( dir, file , ".rda" ) 
+
+  load( saved.file.name )
+  d.nest.national = hosp.nest ; rm( list = 'hosp.nest') ; # gc()
+  
+  # unnest_legacy for speed (https://github.com/tidyverse/tidyr/issues/694)
+  d.national = d.nest.national %>% unnest( cols = c(ts) )
+  
+  # displaying value or raw????
+  patch.plots( d.national ) 
+  
+```
+  
+
+```{r }
+  
+  file = files.facility[ i ] 
+
+  # cat( paste( '\n\n\nopening' , i , ":" , file , '\n') )
+  
+  saved.file.name = paste0( dir, file , ".rda" ) 
+
+  load( saved.file.name )
+  
+  d.nest.facility = hosp.nest ; rm( list = 'hosp.nest') ; # gc()
+  
+  library(tictoc)
+  # tic()
+  
+  d.facility = d.nest.facility %>% dt_unnest( col = ts) 
+  
+  # d.facility = d.nest.facility %>% unnest( col = c(ts)) 
+  # unnest_legacy for speed (https://github.com/tidyverse/tidyr/issues/694)
+  # Jun 2020- unnest_legacy throws error: The result is not a valid tsibble. "Do you need `as_tibble()` to work with data frame?"
+  # toc() # 118.125 sec elapsed; 343.98 sec elapsed
+  
+
+```
+  
+```{r eval=FALSE}
+  d.facility.national =
+    d.facility %>%
+    group_by( data, name , Month ) %>%
+    summarise( value = sum( value, na.rm = TRUE )  ) # raw and value are same
+
+  d.facility.national.sum.total = 
+    d.facility %>% filter( name %in% 'SUM' ) %>%
+    group_by( name , Month ) %>%
+    summarise( value = sum( value , na.rm = TRUE ) ,
+               raw = sum( raw , na.rm = TRUE )) %>%
+    mutate( data = 'Total' , Method = "" )
+  
+  d.facility.national.count.total = 
+    d.facility %>% filter( name %in% 'COUNT' ) %>%
+    group_by( name , Month , orgUnit) %>%
+    mutate( submitted = ifelse( is.na(value), FALSE, TRUE ) ) %>%
+    summarise(
+        boxes = n() ,
+        anyEntry = any( submitted , na.rm = TRUE )  ,
+        allEntry = all( submitted & !is.na( submitted ), na.rm = FALSE )
+    ) %>%
+    group_by( name , Month ) %>%
+    summarise( 
+      anyEntry = sum( anyEntry, na.rm = TRUE )  ,
+      allEntry = sum( allEntry, na.rm = FALSE ) 
+      ) %>%
+    mutate( data = 'Total' ) %>%
+    ungroup %>%
+    pivot_longer( cols = starts_with('a') , 
+                  names_to = 'Method' , values_to = 'value' )
+  
+  d.facility.national.withTotal = bind_rows(
+    d.facility.national ,
+    d.facility.national.sum.total ,
+    d.facility.national.count.total
+  )
+  
+  patch.plots( d.facility.national.withTotal )
+```
+  
+
+
+```{r }
+with.without_outliers = function( ts, out){
+  
+  with.outliers = ts %>%
+    filter( !data %in% 'NA_NA' ) %>%
+    group_by( data , name, Month ) %>%
+    summarise( value = sum( raw , na.rm = TRUE )) %>%
+    ungroup %>%
+    # mutate( name = recode( name,  'SUM'= 'A-Original'  ) )
+      mutate( Transformation = 'Original' )
+  
+  without.outliers =  out %>%
+    filter( !name %in% 'COUNT') %>%
+    group_by( data , name , Month ) %>%
+    summarise( value = sum( ifelse( !is.na( outlier ) , raw - outlier , raw ), na.rm = TRUE ) ) %>%
+    ungroup() %>%
+    # mutate( name = recode( name,  'SUM'= 'B-No Outliers'  ) )
+       mutate( Transformation = 'No Outliers' )
+  
+  filled.in.missing =  out %>%
+    group_by( data , name , Month ) %>%
+    summarise( value = sum( value , na.rm = TRUE ) ) %>%
+    ungroup() %>%
+    # mutate( name = recode( name,  'SUM'= 'C-Imputed' , 'COUNT' = 'CountImputed' ) )
+  mutate( Transformation = 'Imputed' ,
+          name = 'SUM' )
+  
+  imputedCount =  out %>%
+    group_by( data , name , Month ) %>%
+    summarise( value = sum( !is.na( value  ) ) ) %>%
+    ungroup() %>%
+    # mutate( name = recode( name, 'SUM' = 'CountImputed' ) )
+      mutate( name = 'COUNT' , 
+              Transformation =  'Imputed' )
+  
+  bind_rows( with.outliers %>% as_tibble, 
+             without.outliers %>% as_tibble ,
+             filled.in.missing ,
+             imputedCount ) 
+  
+}
+
+
+```
+  
+```{r}
+with.without_outliers2 = function( ts, out){
+  
+  with.outliers = ts %>%
+    filter( !data %in% 'NA_NA' ) %>%
+    mutate( 
+            Transformation = 'Original' ) 
+
+  without.outliers =  out %>%
+    filter( !name %in% 'COUNT') %>%
+    mutate( value = 
+      ifelse( !is.na( outlier ) , 
+              raw - outlier , raw )  ,
+      Transformation = 'No Outliers' 
+      ) 
+  
+  filled.in.missing =  out %>%
+    mutate( 
+            Transformation = 'Imputed' ,
+            name = 'SUM' 
+    )
+  
+  imputedCount =  out %>%
+    ungroup() %>%
+    rowwise() %>%
+    mutate( value = sum( ifelse( interpolate >0 , 1, 0 ) , na.rm = TRUE)  ,
+            name = 'COUNT' , 
+            Transformation =  'Imputed' )
+  
+  
+  bind_rows( with.outliers %>% as_tibble, 
+             without.outliers %>% as_tibble ,
+             filled.in.missing ,
+             imputedCount ) %>%
+    select( orgUnit, data, name, Month, value, Transformation )
+  
+}
+```
+  
+```{r}
+patch.plots2 = function( df , 
+                         wrap_nchar = 25 , 
+                         .period = Month  ,
+                         base_text = 8 ,
+                         n_col = 3
+                        ){
+  .period = rlang::enquo( .period )
+  data = unique( df$data )
+  data = data[ ! data %in% 'NA_NA' ]
+  plots = map( data , ~ df %>% 
+                 filter( data %in% .x ) %>%
+                 ggplot( aes( x = !! .period , y = value , 
+                              group = Transformation , 
+                              color = Transformation ) ) +
+                 
+                 geom_line( 
+                   if ( .x %in% 'Total' ){
+                     aes( x = !! .period , y = value 
+                     )
+                     
+                   } else {
+                     aes( x = !! .period , y = value ) 
+                   }
+                   
+                   )  + 
+                 scale_y_continuous(
+                   expand = expansion(mult=c(0,0.1) ) ,
+                   limits = c( 0 , NA )
+                 ) +
+                scale_colour_manual( 
+                     values = c( 'Original' = 'black' ,
+                                 'No Outliers' = 'red' ,
+                                 'Imputed' = 'blue' 
+                                 ) , drop = FALSE  ) +
+                 facet_grid( name  ~ data  , scales = 'free', 
+                             labeller = labeller( data = label_wrap_gen( wrap_nchar ))
+                 ) + 
+                 
+                 theme_minimal( base_size = base_text )
+  )
+  
+  
+  patch.plots = reduce( plots, `+`)
+  
+  patch.plots = patch.plots + 
+       
+  plot_layout(ncol = n_col , guides = "collect") 
+  
+  return( patch.plots )
+}
+```
+  
+```{r}
+  # tic()
+  # d.facility.out = fms %>% unnest( cols = ts )
+  d.facility.out = fms %>% dt_unnest( col = ts , fill = TRUE )
+  # toc()
+  
+  
+  # Calculate % values unchanged by outlier/impute process
+  # cat( paste( 'The percentage of reports not flagged as outlier is' ,
+  #             (sum( d.facility.out$raw == d.facility.out$value , na.rm = TRUE ) / 
+  #                 nrow( d.facility.out )) %>% percent()
+  # ))
+  
+  # with.without_outliers( d.facility, d.facility.out ) %>% 
+  #   patch.plots2( . , n_col = 2 )
+```
+  
+```{r }
+
+
+  d = with.without_outliers2( d.facility, d.facility.out ) 
+
+  # glimpse( d )
+  d.facility.national =
+    d %>%
+    group_by( data, name , Month, Transformation ) %>%
+    summarise( value = sum( value, na.rm = TRUE )  ) %>%
+    mutate( Method = "" )# raw and value are same
+
+  
+  d.sum.total = 
+    d %>% filter( name %in% 'SUM' ) %>%
+    group_by( name, Transformation , Month ) %>%
+    summarise( value = sum( value , na.rm = TRUE ) ) %>%
+    mutate( data = 'Total' , Method = "" )
+  
+  d.count.total = 
+    d %>% filter( name %in% 'COUNT' ) %>%
+    group_by( orgUnit, name , Transformation , Month ) %>%
+    mutate( submitted = ifelse( is.na(value), FALSE, TRUE ) ) %>%
+    summarise(
+        boxes = n() ,
+        anyEntry = any( submitted , na.rm = TRUE )  ,
+        allEntry = all( submitted & !is.na( submitted ), na.rm = FALSE )
+    ) %>%
+    group_by( name, Transformation, Month ) %>%
+    summarise( 
+      `Any` = sum( anyEntry, na.rm = TRUE )  ,
+      `All` = sum( allEntry, na.rm = FALSE ) 
+      ) %>%
+    mutate( data = 'Total' ) %>%
+    ungroup %>%
+    pivot_longer( cols = starts_with('A') , 
+                  names_to = 'Method' , values_to = 'value' ) %>%
+    unite( name, Method )
+    
+  
+    d.withTotal = bind_rows(
+      d.facility.national ,
+      d.sum.total ,
+      d.count.total 
+      ) %>%
+      mutate( Method = factor( Method ))
+    
+    patch.plots2( d.withTotal , n_col = 2 )
+  
+```
+
+
+```{r }
+
+# glimpse( fms_summary )
+# View( fms_summary )
+
+# histogram of reporting layed out by cat-combo (top) and year (side): potentially slow
+# ggplot( fms_summary ) + 
+#   geom_histogram( aes( factor( n )  ) , stat = 'count') + 
+#   scale_x_discrete( ''  ) +
+#   facet_grid( Year ~ data ) 
+
+# any vs All reporting for each indicator...
+
+monthly.facility.counts = d.facility  %>%
+    filter( name %in% 'COUNT' ) %>%
+    as_tsibble( key = c( data, orgUnit, name ) , index = Month ) %>%
+    # fill_gaps( value = NA ) %>%
+    group_by( orgUnit ) %>%
+    mutate( submitted = as.integer( value ) == 1L ) %>%
+    summarise( 
+        boxes = n() , 
+        anyEntry = any( submitted , na.rm = TRUE )  ,
+        allEntry = all( submitted & !is.na( submitted ), na.rm = FALSE ) 
+    ) 
+
+# table( monthly.facility.counts$anyEntry, monthly.facility.counts$allEntry )
+
+annual.facility.counts = monthly.facility.counts %>%
+    group_by( orgUnit ) %>%
+    index_by( Year = ~ year(.) ) %>%
+    summarise( 
+        months = n() , 
+        anyEntry = sum( anyEntry )  ,
+        allEntry = sum( allEntry ) 
+    ) %>%
+    pivot_longer( cols = c(anyEntry, allEntry ))
+
+# library( ggbeeswarm )
+#  ggplot( annual.facility.counts ) +
+#   geom_quasirandom( aes( name, value  ) ) +
+#   scale_x_discrete( ''  ) +
+#   facet_grid( Year ~ . ) 
+
+
+# Best visual of actual reporting
+
+annual.facilites = annual.facility.counts %>%
+    as_tibble() %>%
+    group_by( Year , name ) %>%
+    summarise( 
+        n_reporting = sum( value >= 1 ) ,
+        n_facilities = n_distinct( orgUnit ) ,
+        avg_months = mean( value ) ,
+        sd_months = sd( value ) ,
+        pct_avg_months =avg_months / mean( months ) ,
+        pct_sd_months =sd_months / mean( months )
+    )
+
+
+
+annual.percent.reporting =
+    annual.facility.counts %>% 
+    as_tibble() %>%
+    group_by( name , Year , value ) %>%
+    summarise( reporting =  n() ,
+               n_facilities = n_distinct( orgUnit ) ) %>%
+    arrange( name, Year, desc( value ) ) %>% 
+    mutate( 
+        percent = reporting / n_facilities ,
+        cumPercent = cumsum( percent )
+            ) 
+
+
+```
+
+```{r eval = FALSE }
+
+ggplot( annual.percent.reporting , aes( value, cumPercent , color = name ) ) +
+    geom_point( ) +
+    geom_text_repel( data = annual.percent.reporting %>% 
+                         filter( value %in% c(6, 9, 12 ) 
+                                 ) , 
+                     aes( label = scales::percent( cumPercent , accuracy = 0.1 ) ) ,
+                     vjust = 1.5 )  +
+    scale_x_continuous( breaks = seq( 0 , 12, 2 ) ) + 
+    scale_y_continuous( labels = scales::percent_format(accuracy = 1) ,
+                        breaks = c( 1)) +
+    scale_color_brewer( 'Reporting\nDefinition', type = 'qual', palette = 2 ) +
+    facet_grid( Year ~ . )  +
+    labs( title = 'Percent reporting by year' ,
+          subtitle = "Reporting all data elements (allEntry),\nand reporting any of the required data elements (anyEntry)" ,
+          caption = paste( "source:" , file ) ,
+          x =  'Number of Months Reporting' ,
+          y = 'Number of facilities' 
+    ) + 
+    theme_minimal( base_size = 12 )
+```
+
+
+- Mean absolute percent error (MAPE).  
+
+```{r }
+harmonic_mean = function( x ){
+    1 / mean( 1/x, na.rm = TRUE )
+}
+
+# https://stackoverflow.com/questions/2602583/geometric-mean-is-there-a-built-in
+gm_mean = function(x, na.rm=TRUE){
+  exp(sum(log(x[x > 0]), na.rm=na.rm) / length(x))
+}
+
+Annual_Error_Rates  = fms_summary %>% # View
+    mutate( MhAPE = ifelse( is.nan(MhAPE) | MhAPE %in% Inf , NA, MhAPE ) ) %>% 
+    as_tibble() %>%
+    group_by( Year ) %>%
+    summarise( 
+        total_raw = sum( total_raw ) , 
+        total_outlier = sum( total_outlier ) , 
+        total_interp = sum( total_interp ) , 
+        # Pecent_Error = harmonic_mean( MhAPE ) ,
+        Percent_Error = gm_mean( MhAPE , na.rm = T )
+    ) %>%
+    mutate( 
+        Percent_Outlier = total_outlier / total_raw  ,
+        Percent_Potentially_Missing = total_interp / total_raw
+    ) 
+
+kable( Annual_Error_Rates )
+
+
+# MhAPE
+Annual_faciltiy_Error_Rates  = fms_summary %>% # View
+    mutate( MhAPE = ifelse( is.nan(MhAPE) | MhAPE %in% Inf , NA, MhAPE ) ) %>% 
+    as_tibble() %>%
+    group_by( orgUnit, Year ) %>%
+    summarise( 
+        total_raw = sum( total_raw ) , 
+        total_outlier = sum( total_outlier ) , 
+        total_interp = sum( total_interp ) , 
+        # Pecent_Error = harmonic_mean( MhAPE ) ,
+        Percent_Error = mean( MhAPE , na.rm = T )
+    ) %>%
+    mutate( 
+        Percent_Outlier = total_outlier / total_raw  ,
+        Percent_Potentially_Missing = total_interp / total_raw ,
+        error = cut( Percent_Error, breaks = c( 0,.1, .2, .3, .4, .5, Inf ) )
+        )
+
+
+```
+
+```{r eval = FALSE }
+
+Annual_Error_Rates %>% 
+    select( -total_raw, -total_interp, -total_outlier ) %>%
+    pivot_longer( cols = contains('Percent') ) %>%
+    mutate( name = 
+                recode( name , 
+                        'Percent_Outlier' = 'Outliers' , 
+                        'Percent_Error' = 'Mean Absolute Percent Error' , 
+                        'Percent_Potentially_Missing' = 'Missing Data' 
+                )
+    ) %>%
+    filter( value < 100 ) %>%
+    ggplot( aes( Year, value , color = name ) ) +
+    geom_point() +
+    scale_y_continuous( labels = scales::percent_format(accuracy = 1) )  +
+    labs( title = 'Annual National Reporting Error' ,
+          subtitle = "Average of all facilities reporting" ,
+          caption = paste( "source:" , file ) ,
+          x =  '' ,
+          y = '' 
+    ) + 
+    theme_minimal( base_size = 12 )
+
+
+Annual_faciltiy_Error_Rates %>%
+    filter( Percent_Error<2, Percent_Error>0 ) %>%
+    ggplot() +
+    geom_histogram( aes( Percent_Error ) ,  binwidth = .1 ) + 
+    # geom_boxplot( aes( n, MhAPE, group = n ) , alpha = .05 ) + 
+    facet_grid( Year ~ . , scales = 'free')  +
+    scale_x_continuous( labels = scales::percent_format(accuracy = 1) )  +
+    labs( title = 'Mean Absolute Percent Error' ,
+          subtitle = "Average of monthly difference between reported value and predicted value" ,
+          caption = paste( "source:" , file ) ,
+          x =  'Percent Error' ,
+          y = 'Number of facilities' 
+    ) + 
+    theme_minimal( base_size = 12 )
+
+
+```
+
+
+```{r , fig.height = 6 }
+
+sf.e = left_join( sf. , 
+                  Annual_faciltiy_Error_Rates %>%
+                    filter( Year == 2019 ) , 
+                  by = c('orgUnit') 
+                  ) 
+
+# View( st_drop_geometry( sf.e ))
+
+g = ggplot( ) +
+  annotation_map_tile(type = "cartolight" , 
+                      zoom = 6 ,
+                      progress = "none" ) +
+  layer_spatial( data = sf.e %>% filter( levelName %in% 'Regional' ) , 
+                 alpha = .5 ) +
+  layer_spatial( data = sf.e %>% filter( leaf == TRUE ) ,
+                 alpha = .95 , aes( color = error , fill = error )) +
+  scale_color_brewer( type = "seq" , palette = 'RdYlGn', direction = -1) + 
+  scale_fill_brewer( type = "seq" , palette = 'RdYlGn' , direction = -1 ) + 
+  annotation_scale(location = "tl") +
+  labs( title = 'Data Quality: Mean Absolute Percent Error' ,
+        subtitle = 'Mean of APE among all categories' )
+
+suppressWarnings( print( g ))
+
+```
+
