@@ -17,7 +17,7 @@ source( "data_time_libraries.r")
 library(pacman)
 
 pacman::p_load( officer , rvg ,tidyverse, scales, tidyfast, tidytable ,
-        lubridate , anytime, progressr , assertthat  ,
+        lubridate , anytime, progressr , assertthat  , stringr, 
         readxl, patchwork, cowplot, kableExtra  ,
         tsibble, fable, fabletools, feasts  , 
         fable.prophet ,  #fable.bsts  , 
@@ -71,7 +71,9 @@ files = function(  search = 'All' , type = 'xlsx' , other = "" , ... ){
 
 file.dir = function( country = country ,
                      dir.base = '../dataDictionary/dhis2_dictionary/Formulas/' ){
-  paste0( dir.base , country , "/")
+  
+  paste0( dir.base , country , "/" )
+
 }
 
 most_recent_file = function( file_list_with_date ){
@@ -202,9 +204,13 @@ observeEvent( input$screenshot , {
 
 ```{r Formulas }
 
-formula.file = reactive({ paste0( file.dir( input$country , 
-                                            dir.base = input$data.directory ), 
-                                  files('Formula' , country = input$country )[1] )
+formula.file = reactive({ 
+  req( input$data.directory )
+  req( input$country  )
+  
+  paste0( file.dir( input$country , 
+                    dir.base = input$data.directory ), 
+          files('Formula' , country = input$country )[1] )
   })
 
 formulas =  reactive({
@@ -244,8 +250,8 @@ observe({  updateTextInput( session, 'startingYear' , value  =   min( year(d()$M
 
 observe({
   req( input$data.directory  )
-  if ( dir.exists( input$data.directory  ) ){ 
-    data.dirs = input$data.directory 
+  if ( dir.exists( input$data.directory ) ){ 
+    data.dirs = input$data.directory
     print( 'updating country folder' )
     updateSelectInput( session, 'country' , 
                        choices =  list.dirs( data.dirs , recursive=FALSE) %>%
@@ -1017,6 +1023,8 @@ output$plotAgregateValue <- renderPlot({  plotAgregateValue()  })
 
 ous.file = reactive({
   req( input$country )
+  req( input$data.directory )
+  
   dir = file.dir( input$country , dir.base = input$data.directory )
     
   if ( file.exists( paste0( dir , 'newOUS.rds')  ) ){
@@ -1407,6 +1415,11 @@ selectInput("horizon", label = "Evaluation period (months):" ,
 checkboxInput( "selected" , label ='Show selected facilities',
                value = TRUE  ) 
 
+
+selectInput("filter_split", label = "Filter output:" , 
+              choices = NULL , 
+              selected = NULL  ) 
+
 ```
 
 ### Forecast Model
@@ -1428,6 +1441,8 @@ selectInput("model", label = "Time-series model:" ,
               selected = 'ARIMA'  ) 
 
 
+
+
 ```
 
 Row 
@@ -1443,16 +1458,39 @@ observe({  updateSelectInput( session, 'evaluation_month' ,
   } )
             
 
+observeEvent(
+  
+  input$split  , 
+  
+  { 
+  if ( !input$split %in% 'None' ){
+    
+    splits = data.total() %>% pull( .data[[ input$split ]] ) %>% unique
+
+    updateSelectInput( session, 'filter_split' , choices =  c( 'All', splits ) )
+    
+    print( paste( splits , collapse = ',' ) )
+  } else {
+    
+    updateSelectInput( session, 'filter_split' , choices =  c( 'All' ) )
+  }
+} )
+
 trendData = reactive({
 
   if (input$selected & !is.null( selectedOUs() ) ){
-    .data = data.selected()
+    .d = data.selected()
   } else {
-    .data = data.total()
+    .d = data.total()
   }
+      
+    if ( !input$split %in% 'None' & !input$filter_split %in% 'All' ){
+        print( 'filter_split is not null' )
+        .d = .d %>% filter( .data[[ input$split ]] %in% input$filter_split )
+      }
   
   print( 'trend data:'); # glimpse( .data )
-  return( .data )
+  return( .d )
 })
 
 
@@ -1630,10 +1668,12 @@ plotTrends = reactive({
   #                              'facilities selected' )
   
   data.text = paste( unique( plotData()$data ), collapse = " + " )
-  print( 'data.text'); print( data.text ); # glimpse( trendData() )
+  # print( 'data.text'); print( data.text ); # glimpse( trendData() )
 
   if ( input$split != 'None' ){
-      g = ggplot( data = trendData() ,
+    
+
+      g = ggplot( data = trendData() %>% as_tibble() ,
               aes_string( x = 'Month' , y = 'total', color = 'facilities', 
                    linetype = input$split )
       )
@@ -1642,15 +1682,15 @@ plotTrends = reactive({
       g = ggplot( data = trendData() %>% as_tibble ,
               aes( x = Month , y = total, color = facilities ) )
   }
+  
   g = g +
     geom_point( ) + 
     geom_line( alpha = .75 ) +
     # geom_line(  data = data.selected() ,  alpha = .75  ) +
     scale_x_yearmonth(date_breaks="6 months" ) +
-    scale_y_continuous( label=comma ) +
+    scale_y_continuous( label=comma, limits = c( 0 , NA ) ) +
     scale_color_manual( values = c( 'All' = 'black' , 
                                     'Selected'= 'brown' ) ) +
-    ylim( 0 , NA ) +
     labs( y = "" , x="" ,
           title = str_wrap( input$indicator , 100 ) ,
           subtitle = str_wrap( data.text , 100 ) 
