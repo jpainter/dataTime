@@ -56,10 +56,9 @@ most_recent_file = function( file_list_with_date ){
 
 Month_Year = function( x ){ yearmonth( zoo::as.yearmon( x , "%Y%m") ) }
 
-files = function(  search = 'All' , type = 'xlsx' , other = "" , ... ){
+files = function(  search = 'All' , type = 'xlsx' , other = "" , directory = NULL ){
                         
-                      dir = file.dir( ... )
-                      dir.files = list.files( dir )
+                      dir.files = list.files( directory )
                       search_and_type =  
                           str_detect( dir.files, fixed( search , ignore_case=TRUE )  )  &
                            grepl( paste0( type , '$' ) , dir.files, 
@@ -69,28 +68,16 @@ files = function(  search = 'All' , type = 'xlsx' , other = "" , ... ){
                       return( files[ rev( order( files )) ]  )
                       }
 
-file.dir = function( country = country ,
+file.dir = function( country = NULL ,
                      dir.base = '../dataDictionary/dhis2_dictionary/Formulas/' ){
   
+  has.slash.at.end = str_locate_all( dir.base , "/") %>% 
+    unlist %in% nchar( dir.base) %>% any 
+  if ( !has.slash.at.end  ){ dir.base = paste0( dir.base , "/" ) }
   paste0( dir.base , country , "/" )
 
 }
 
-most_recent_file = function( file_list_with_date ){
-  rdsFileSplit = str_split( file_list_with_date , "_")
-  download_date = map( rdsFileSplit ,
-                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
-  ) %>% map_chr(1) 
-  
-  dates  = map_chr( download_date , ~ anydate(.x)  )
-  
-  if ( identical( dates , character(0) ) ) return( NA )
-  
-  # most recent file 
-  file = file_list_with_date[ which( dates == max(dates, na.rm = T ) ) ]
-  
-  return ( file )
-}
 
 # see https://stackoverflow.com/questions/54438495/shift-legend-into-empty-facets-of-a-faceted-plot-in-ggplot2
 shift_legend2 <- function(p) {
@@ -204,13 +191,20 @@ observeEvent( input$screenshot , {
 
 ```{r Formulas }
 
+
+data.folder = reactive({
+  req( input$country )
+  req( input$data.directory  )
+  file.dir( country = input$country , dir.base = input$data.directory )
+})
+
 formula.file = reactive({ 
-  req( input$data.directory )
-  req( input$country  )
-  
-  paste0( file.dir( input$country , 
-                    dir.base = input$data.directory ), 
-          files('Formula' , country = input$country )[1] )
+  req( data.folder() )
+
+  paste0( data.folder() , 
+          files( search = 'Formula' , directory = data.folder() )  %>% 
+            most_recent_file() 
+          )
   })
 
 formulas =  reactive({
@@ -220,7 +214,8 @@ formulas =  reactive({
   
   if ( !file.exists( formula.file() ) ) return( NULL )
   formulas = read_excel( formula.file() , sheet = 'Formula') %>% 
-    filter( !is.na(Formula.Name)) 
+    filter( !is.na(Formula.Name)) %>%
+    arrange( Formula.Name )
   
   print( 'formulas') ; print( formulas$Formula.Name )
   
@@ -261,21 +256,18 @@ observe({
 } )
 
 
-dir = reactive({ file.dir( input$country , dir.base = input$data.directory  )  })
-
-
 country_files = reactive({ 
 
   
-    if ( !dir.exists( dir() )) return( NULL )
-    dir.files = list.files( dir() )
+    if ( !dir.exists( data.folder() )) return( NULL )
+    dir.files = list.files( data.folder() )
     print( "dir.files : "); # print( dir.files )
     return( dir.files )
 })
   
 rds_data_file = reactive({
   req( country_files() )
-  req( input$indicator )
+  req( data.folder() )
     
   dir.files = country_files()
 
@@ -296,9 +288,9 @@ rds_data_file = reactive({
   
   if ( sum( f.indicator ) == 0 ) return( NULL )
   
-  if ( !dir.exists( dir() )) return( NULL )
+  if ( !dir.exists( data.folder() )) return( NULL )
   
-  data_file = paste0( dir() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
+  data_file = paste0( data.folder() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
   
   if ( !file.exists( data_file )) return( NULL )
 
@@ -901,7 +893,7 @@ data.total = reactive({
       data %>% 
       group_by(  across( all_of( group_by_cols() )) ) %>%
       summarise( total = sum( dataCol , na.rm = TRUE  ) ) %>%
-      as_tsibble( index = Month, key =  key.cols ) %>%
+      as_tsibble( index = Month, key =  all_of(key.cols) ) %>%
       fill_gaps( .full = TRUE  ) %>%
       mutate( facilities ="All" ,
               total = replace_na( total , 0) )  # for plotting, replace missing with zero 
@@ -1016,18 +1008,18 @@ output$plotAgregateValue <- renderPlot({  plotAgregateValue()  })
 ```
 
 
-### Map {.no-padding}
+### Map {.no-padding }
 
 
 ```{r ous }
 
+
 ous.file = reactive({
-  req( input$country )
-  req( input$data.directory )
+  req( data.folder() )
   
-  dir = file.dir( input$country , dir.base = input$data.directory )
-    
-  if ( file.exists( paste0( dir , 'newOUS.rds')  ) ){
+  dir = data.folder() 
+  
+  if ( file.exists( paste0( data.folder() , 'newOUS.rds')  ) ){
      
     f = paste0( dir,'newOUS.rds'  )
     
@@ -1081,6 +1073,9 @@ levelNames = reactive({
 
 ```{r map1 , eval = TRUE }
 
+checkboxInput( "show_map", label ='Display map (may take a minute...)', 
+               value = FALSE ) 
+
 plotOutput( 'map1' , 
     click = "map1_click" ,
     dblclick = "map1_dblclick" ,
@@ -1101,17 +1096,21 @@ map1 = reactive({
   req( admins())
   req( hf())
   
-  ggplot( ) + 
-  geom_sf( data = isolate( admins() ) ) +
-  geom_sf( data = isolate( hf() ) , alpha = .25 ) +
-  # geom_sf( data = fs_selected() , color = 'brown' ) +
-  theme_ipsum()
-  
+  if ( input$show_map ){
+    ggplot( ) + 
+    geom_sf( data = isolate( admins() ) ) +
+    geom_sf( data = isolate( hf() ) , alpha = .25 ) +
+    geom_sf( data = fs_selected() , color = 'brown' ) +
+    theme_ipsum()
+  } else { NULL }
   
 })
 
 output$map1<-renderCachedPlot({ map1() } ,
-                              cacheKeyExpr = { list( input$country , fs_selected() ) } ) 
+                              cacheKeyExpr = { list( input$country , 
+                                                     input$show_map , 
+                                                     fs_selected() )
+                                } ) 
 
 ```
 
@@ -1397,6 +1396,10 @@ Row
 
 ```{r}
 
+selectInput("filter_split", label = "Filter display:" , 
+              choices = NULL , 
+              selected = NULL  ) 
+
   dates = reactive({ 
     req( data.total() )
     unique( data.total()$Month )  
@@ -1416,9 +1419,6 @@ checkboxInput( "selected" , label ='Show selected facilities',
                value = TRUE  ) 
 
 
-selectInput("filter_split", label = "Filter output:" , 
-              choices = NULL , 
-              selected = NULL  ) 
 
 ```
 
