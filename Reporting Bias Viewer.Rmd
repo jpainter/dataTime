@@ -165,7 +165,12 @@ inputPanel(
   actionButton( "screenshot" , "Screenshot" ) ,
   
   selectInput("shotSelection", label = "Screenshot Chart:" , 
-              choices = c(NULL, 'plot1', 'plot2', 'map1' , 'plotAgregateValue' ),
+              choices = c(NULL, 
+                          'plot_reporting_by_month', 
+                          'plot_reports_in_a_year', 
+                          'map' , 
+                          'plot_values' ,
+                          'plot_trends'),
               selected = NULL ) 
   # checkboxInput( 'calendar_year', "Calendar Year" , value = TRUE )
 )
@@ -181,9 +186,16 @@ inputPanel(
 ```{r screenshot}
 
 observeEvent( input$screenshot , {
+  screenshot.file = filename = paste(input$country,
+                                     input$indicator, 
+                                     input$shotSelection,
+                                     sep="_"  )
+  print( paste(
+    'Screenshot saved to:' , screenshot.file 
+  ))
+  
   screenshot( id = input$shotSelection, 
-              filename = paste(input$country, input$indicator, 
-                                input$shotSelection,  sep="_"  ) ,
+              filename = screenshot.file ,
               scale = 8
   )
 })
@@ -650,10 +662,10 @@ Row
 -------------------------------------
   
 
-### Number of Facilties Reporting by Month
+### Number of Facilties Reporting by Month (plot_reporting_by_month)
 
 ```{r}
-plotOutput( 'plot2' , 
+plotOutput( 'plot_reporting_by_month' , 
     click = "plot2_click" ,
     dblclick = "plot2_dblclick" ,
     hover = "plot2_hover" ,
@@ -662,7 +674,7 @@ plotOutput( 'plot2' ,
 ```
 
 
-```{r plot2 }
+```{r plot_reporting_by_month }
 
 plot2 = reactive({
   req( monthly.reports() )
@@ -698,7 +710,7 @@ plot2 = reactive({
   }
 })
 
-output$plot2 <- renderPlot({  plot2()  })
+output$plot_reporting_by_month <- renderPlot({  plot2()  })
 
 ```
 
@@ -766,10 +778,10 @@ htmlOutput("x_value")
 
 ```
 
-### Histogram of Annual Number of Months Reported
+### Histogram of Annual Number of Months Reported (plot_reports_in_a_year)
 
 ```{r}
-plotOutput( 'plot1' , 
+plotOutput( 'plot_reports_in_a_year' , 
     click = "plot1_click" ,
     dblclick = "plot1_dblclick" ,
     hover = "plot1_hover" ,
@@ -798,7 +810,7 @@ plot1 = reactive({
   }
 })
 
-output$plot1 <- renderPlot({  plot1()  })
+output$plot_reports_in_a_year <- renderPlot({  plot1()  })
 
 ```
 
@@ -806,12 +818,12 @@ Row
 -------------------------------------
   
 
-### Value
+### Values (plot_values)
 
 
 ```{r plotAgregateValue  }
 
-plotOutput( 'plotAgregateValue' ,
+plotOutput( 'plot_values' ,
     hover = "plotSelectedOusValues_hover" ,
     brush = "plotSelectedOusValues_brush"
     )
@@ -869,8 +881,8 @@ data.total = reactive({
   if ( input$merge & input$total ){
     
 
-    dataset_group_by_cols  = rlang::syms( c( group_by_cols() , 
-                                             'orgUnit' , 'dataSet' )
+    dataset_group_by_cols  = rlang::syms( 
+      unique( c( group_by_cols() , 'orgUnit' , 'dataSet' ) )
     )
 
     combined_group_by_cols  = rlang::syms( c( group_by_cols() , 'orgUnit'  )
@@ -1003,7 +1015,7 @@ plotAgregateValue = reactive({
   return( g )
 })
 
-output$plotAgregateValue <- renderPlot({  plotAgregateValue()  })
+output$plot_values <- renderPlot({  plotAgregateValue()  })
 
 ```
 
@@ -1076,7 +1088,7 @@ levelNames = reactive({
 checkboxInput( "show_map", label ='Display map (may take a minute...)', 
                value = FALSE ) 
 
-plotOutput( 'map1' , 
+plotOutput( 'map' , 
     click = "map1_click" ,
     dblclick = "map1_dblclick" ,
     hover = "map1_hover" ,
@@ -1106,7 +1118,7 @@ map1 = reactive({
   
 })
 
-output$map1<-renderCachedPlot({ map1() } ,
+output$map<-renderCachedPlot({ map1() } ,
                               cacheKeyExpr = { list( input$country , 
                                                      input$show_map , 
                                                      fs_selected() )
@@ -1396,7 +1408,7 @@ Row
 
 ```{r}
 
-selectInput("filter_split", label = "Filter display:" , 
+selectInput("filter_data", label = "Filter data:" , 
               choices = NULL , 
               selected = NULL  ) 
 
@@ -1422,9 +1434,14 @@ checkboxInput( "selected" , label ='Show selected facilities',
 
 ```
 
-### Forecast Model
+### Forecast Type
 
 ```{r}
+
+selectInput("filter_display", label = "Filter display:" , 
+              choices = NULL , 
+              selected = NULL  ) 
+
 
 checkboxInput( "smooth" , label ='Show smoothed trend line (loess)',
                value = FALSE  ) 
@@ -1436,11 +1453,28 @@ checkboxInput( "pre_evaluation" , label ='Show predicted values during during ye
 checkboxInput( "evaluation" , label ='Show predicted values during evaluation period (assuming no intervetion)',
                value = FALSE  ) 
 
+```
+
+
+### Model Details
+
+```{r}
+
+
 selectInput("model", label = "Time-series model:" , 
               choices = c('ARIMA', 'Prophet') , 
               selected = 'ARIMA'  ) 
 
 
+checkboxInput( "forecast_ci" , label ='Confidence interval',
+               value = FALSE  ) 
+
+checkboxInput( "bootstrap" , label ='Bootstrap prediction',
+               value = FALSE  ) 
+
+selectInput("Reps", label = "Iterations" , 
+              choices = c(100, 1000, 5000, 10000) , 
+              selected = 1000  ) 
 
 
 ```
@@ -1448,7 +1482,8 @@ selectInput("model", label = "Time-series model:" ,
 Row 
 -------------------------------------
 
-### Impact
+
+### Impact (plot_trends)
 
 ```{r forecast_plot}
 
@@ -1467,12 +1502,14 @@ observeEvent(
     
     splits = data.total() %>% pull( .data[[ input$split ]] ) %>% unique
 
-    updateSelectInput( session, 'filter_split' , choices =  c( 'All', splits ) )
+    updateSelectInput( session, 'filter_data' , choices =  c( 'All', splits ) )
+    updateSelectInput( session, 'filter_display' , choices =  c( 'All', splits ) )
     
     print( paste( splits , collapse = ',' ) )
   } else {
     
-    updateSelectInput( session, 'filter_split' , choices =  c( 'All' ) )
+    updateSelectInput( session, 'filter_data' , choices =  c( 'All' ) )
+    updateSelectInput( session, 'filter_display' , choices =  c( 'All' ) )
   }
 } )
 
@@ -1484,9 +1521,9 @@ trendData = reactive({
     .d = data.total()
   }
       
-    if ( !input$split %in% 'None' & !input$filter_split %in% 'All' ){
-        print( 'filter_split is not null' )
-        .d = .d %>% filter( .data[[ input$split ]] %in% input$filter_split )
+    if ( !input$split %in% 'None' & !input$filter_data %in% 'All' ){
+        print( 'filter_data is not null' )
+        .d = .d %>% filter( .data[[ input$split ]] %in% input$filter_data )
       }
   
   print( 'trend data:'); # glimpse( .data )
@@ -1495,7 +1532,7 @@ trendData = reactive({
 
 
 
-plotOutput( 'plotTrends'
+plotOutput( 'plot_trends'
     # , hover = "plotTrends_hover" ,
     # , brush = "plotTrends_brush" ,
     # , click = "plotTrends_click" ,
@@ -1596,8 +1633,18 @@ tsForecast = reactive({
   req( tsModel() ) 
   req( input$horizon )
   
-  fcast = tsModel() %>% forecast( h = as.numeric( input$horizon ) )
-  print( 'fcast' ); # glimpse( fcast )
+  if ( input$bootstrap ){
+    
+    fcast = tsModel() %>% 
+      forecast( h = as.numeric( input$horizon ) ,
+                bootstrap = TRUE, 
+                times = as.integer( input$Reps ) 
+      )
+  } else {
+    fcast = tsModel() %>% 
+      forecast( h = as.numeric( input$horizon ) )
+  }
+  print( 'fcast:' );  glimpse( fcast )
   return( fcast )
   })
 
@@ -1672,14 +1719,20 @@ plotTrends = reactive({
 
   if ( input$split != 'None' ){
     
+      .d = trendData() %>% as_tibble %>% 
+          filter( .data[[ input$split ]] %in% input$filter_display )
 
-      g = ggplot( data = trendData() %>% as_tibble() ,
+
+      g = ggplot( data = .d ,
               aes_string( x = 'Month' , y = 'total', color = 'facilities', 
                    linetype = input$split )
       )
     
   } else {
-      g = ggplot( data = trendData() %>% as_tibble ,
+    
+        .d = trendData() %>% as_tibble 
+        
+        g = ggplot( data = .d ,
               aes( x = Month , y = total, color = facilities ) )
   }
   
@@ -1698,15 +1751,19 @@ plotTrends = reactive({
           ) +
     theme_minimal()
   
+  # Evaluation Trend Line
   if (input$evaluation) g = g + 
-    geom_line( data = tsForecast(), aes( y = .mean ) ,   color = 'blue' , alpha = .5 ) +
-    geom_vline( xintercept = as.Date(yearmonth( input$evaluation_month  )) , color = 'black', alpha = .25 ) +
+    geom_line( data = tsForecast(), aes( y = .mean ) ,   
+               color = 'blue' , alpha = .5 ) +
+    geom_vline( xintercept = as.Date(yearmonth( input$evaluation_month  )) , 
+                color = 'black', alpha = .75 ) +
     annotate( "text" ,
               x = as.Date(yearmonth( input$evaluation_month  ) ) ,
               y = 10 ,
               hjust = 0, 
               label = paste( "Mean Percent Error:", MPE() ) )
   
+  # Pre-Evaluation trend line
   if (input$pre_evaluation) g = g + 
     geom_line( data = tsPreForecast(), aes( y = .mean ) ,   color = 'light blue', alpha = 1 ) +
     geom_vline( xintercept = as.Date(yearmonth( input$evaluation_month  ) - month(12)) , color = 'brown' , alpha = .25 ) +
@@ -1717,14 +1774,42 @@ plotTrends = reactive({
               label = paste( "Mean Absolute Percent Error:", MAPE() ) )
   
   if (input$smooth) g = g + 
-    geom_smooth( data = trendData() %>% as_tibble , alpha = .25 )
+    geom_smooth( data = trendData() %>% as_tibble , alpha = .75 )
 
   # return( ggplotly( g ) )
+  
+  # Confidence Interval
+  if ( input$forecast_ci & input$evaluation ){
+    fbl = tsForecast() 
+    print( 'glimpse fbl') ; glimpse( fbl )
+    ci = fbl %>% 
+      mutate( hilo = hilo( total , 80 ) )
+    ci$.lower = ci$hilo$lower 
+    ci$.upper = ci$hilo$upper 
+    print( 'glimpse ci') ; glimpse( ci )
+    
+    print( 'summary lower') ; print( summary( ci$.lower ) )
+    print( 'summary upper') ; print( summary( ci$.upper ) )
+    
+    g = g + 
+      geom_ribbon(  data = ci , 
+        color = 'blue' , alpha = .5 , 
+        # fill = 'blue' , 
+        inherit.aes = FALSE ,
+        aes( x = Month, ymin = .lower, ymax = .upper )
+             # ymin = .mean, 
+             # ymax = .mean 
+             # )
+    )
+    return( g )
+  } 
+    
+    
   return( g )
 })
 
 # output$plotTrends <- renderPlotly({  plotTrends()  })
-output$plotTrends <- renderPlot({  plotTrends()  })
+output$plot_trends <- renderPlot({  plotTrends()  })
 
 ```
 
