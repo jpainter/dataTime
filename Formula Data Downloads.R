@@ -1,8 +1,8 @@
 # Testing dataset reporting downloads
 
 
-country = "Uganda-2020"
-QR = TRUE 
+country = "Guinea"
+QR = FALSE 
 
 # libraries and functions ####
 library(pacman)
@@ -209,7 +209,7 @@ for ( i in which( most_recent_data_files$update ) ){
   
   print( 'Formula.Name' ) ; print(  most_recent_data_files$formula[i] )
   
-  elements = api_formula_elements( most_recent_data_files$formula[i]  ) %>%
+  elements = api_formula_elements( most_recent_data_files$formula[i] , country.dir  ) %>%
     str_replace_all(  '\r' , "") %>%
     str_replace_all(  '\n' , "") %>%
     str_replace_all(  ' ' , "") %>%
@@ -235,13 +235,13 @@ for ( i in which( most_recent_data_files$update ) ){
                  formula = most_recent_data_files$formula[i] ,
                  update = most_recent_data_files$update[i] & !is.na(most_recent_data_files$file[i]) ,
                  check_previous_years = YrsPrevious  , 
-                 previous_dataset_file = paste0( dir , 
+                 previous_dataset_file = paste0( country.dir , 
                                                  most_recent_data_files$file[i]) )
   
   min_period = min(str_split(periods, ";")[[1]])
   max_period = max(str_split(periods, ";")[[1]])
   period_string = ifelse( min_period == max_period , periods , glue::glue( min_period , "_", max_period ) )
-  save_to_filename =  paste0( dir, country, "_" , most_recent_data_files$formula[i]  , "_" , level ,"_", 
+  save_to_filename =  paste0( country.dir, country, "_" , most_recent_data_files$formula[i]  , "_" , level ,"_", 
                               period_string ,"_", Sys.Date() , ".rds") 
   saveRDS( x , save_to_filename )
   print( paste( 'finished downloading' , most_recent_data_files$formula[i] ,
@@ -351,30 +351,42 @@ for ( i in which( !most_recent_data_files$update ) ){
       left_join( paths.translated , 
                  by = c( 'orgUnit' = 'id') ) 
   
+  ### NB: can make column for each 'box' by id or by label
+  ### need to adjust to match the formula expressions
   d.box = dataset %>%
-    select( -dataElement , - Categories ) %>% 
+    select( -dataElement , - Categories ) %>%
     unite( "box" , dataElement.id , categoryOptionCombo.ids,
            sep = ".", remove = TRUE, na.rm = FALSE
-    ) %>% 
-    complete( box, period , nesting( leaf, effectiveLeaf , level, levelName, orgUnitName, orgUnit ) , 
+    ) %>%
+    # select( -dataElement.id , - categoryOptionCombo.ids ) %>% 
+    # unite( "box" , dataElement , Categories ,
+    #        sep = ".", remove = TRUE, na.rm = FALSE
+    # ) %>% 
+    complete( box, period , 
+              nesting( leaf, effectiveLeaf , level, levelName, orgUnitName, orgUnit ) , 
               fill = list( SUM = 0 ,
                            COUNT = 0 
               ) ) 
 
   formula_expression = formulas %>% 
     filter( Formula.Name %in% most_recent_data_files$formula[i] ) %>%
-    pull( Formula ) #Formula.id
+    pull( Formula.id )
   
   # TODO:
   # Sometimes the download has no values for one of the requested formula elements.
   # In that case, the formula will fail because it the column is missing
   # Revise formula expression to include available columns only
   
-  d.box$box %>% unique
+  box_vars = d.box$box %>% unique
     
-  sum.fe = paste("sum(c(" , str_replace_all( formula_expression , fixed("+") , "," ) , "), na.rm = TRUE)" )
-  min.fe = paste("min(c(" , str_replace_all( formula_expression , fixed("+") , "," ) , "), na.rm = TRUE  )" )
-  max.fe = paste("max(c(" , str_replace_all( formula_expression , fixed("+") , "," ) , "), na.rm = TRUE)" )
+  # get formula, and limit to available vars in box
+  formula_box = str_replace_all( formula_expression , fixed("+") , "," ) %>%
+    str_split( " , ") %>% unlist %>% intersect( box_vars ) %>% 
+    paste(. , collapse = " , " )
+  
+  sum.fe = paste("sum(c(" , formula_box , "), na.rm = TRUE)" ) 
+  min.fe = paste("min(c(" , formula_box , "), na.rm = TRUE)" ) 
+  max.fe = paste("max(c(" , formula_box , "), na.rm = TRUE)" ) 
   
 
   # Pivot wider and sum 

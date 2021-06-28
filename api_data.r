@@ -15,10 +15,14 @@ code.dir =  "../dataDictionary/dhis2_dictionary/"
 source(  paste0( code.dir, 'dhis2_functions.r') )
 source( paste0( code.dir, 'API.r') )
 
-api_formula_elements = function( formulaName , ...  ){
+api_formula_elements = function( formulaName , dir =NULL , ...  ){
+  
+  # if (!is.null( dir ) ) dir = paste0( dir)
+  
+  formula.file = files('formula' , country = country )
   
   formula.elements = read_excel( 
-    paste0( dir , files('formula' , country = country )[1]  ), 
+    paste0( dir , formula.file[1]  ), 
     sheet = 'Formula Elements') 
   
   de = filter( formula.elements , 
@@ -252,6 +256,7 @@ api_data = function(      periods = "LAST_YEAR" ,
                           update = FALSE ,
                           check_previous_years = 2 , 
                           previous_dataset_file = NULL ,
+                          dir = country.dir ,
                           ...
 ){
   tic()
