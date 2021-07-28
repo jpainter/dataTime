@@ -16,9 +16,9 @@ pacman::p_load( scales, knitr, scales ,  #gsubfn  for strapplyc, line 221
         )
 
 
-source('../dataDictionary/dhis2_dictionary/dhis2_functions.R')  
-source( '../dataTime/Deviation_Expected_Functions.R')
-source( '../dataDictionary/dhis2_dictionary/API.r')
+source('dhis2_functions.R')  
+source( 'Deviation_Expected_Functions.R')
+# source( '../dhis2_dictionary/API.r')
 source( 'api_data.r')
 
 
@@ -289,7 +289,8 @@ for ( i in which( most_recent_data_files$update ) ){
                  elements = elements, 
                  baseurl = baseurl , 
                  formula = most_recent_data_files$formula[i] ,
-                 update = most_recent_data_files$update[i] & !is.na(most_recent_data_files$file[i]) ,
+                 update = most_recent_data_files$update[i] & 
+                   !is.na(most_recent_data_files$file[i]) ,
                  check_previous_years = YrsPrevious  , 
                  previous_dataset_file = paste0( country.dir , 
                                                  most_recent_data_files$file[i]) )
