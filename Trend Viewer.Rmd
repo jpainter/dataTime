@@ -16,7 +16,9 @@ source( "data_time_libraries.r")
 
 library(pacman)
 
-pacman::p_load( officer , rvg ,tidyverse, scales, tidyfast, tidytable ,
+pacman::p_load( officer , rvg ,
+                tidyverse, scales, 
+                data.table , tidyfast, tidytable ,
         lubridate , anytime, progressr , assertthat  , stringr, 
         readxl, patchwork, cowplot, kableExtra  ,
         tsibble, fable, fabletools, feasts  , 
@@ -36,13 +38,16 @@ source( "ingest_formula_data.r")
 source( "formula_files.r" )
 source( "clean_ts.r" )
 source( "outlier.r" )
-source( '../dataTime/Deviation_Expected_Functions.R')
+source( 'Deviation_Expected_Functions.R')
 
-most_recent_file = function( file_list_with_date ){
+most_recent_file = function( file_list_with_date , mark = 3 ){
   rdsFileSplit = str_split( file_list_with_date, "_")
-  download_date = map( rdsFileSplit ,
-                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
-  ) %>% map_chr(1) 
+  # download_date = map( rdsFileSplit ,
+  #                      ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  # ) %>% map_chr(1) 
+  
+  download_date = map_chr( rdsFileSplit ,
+                       ~.x[which( grepl( fixed("-") , .x ) )] )
   
   dates  = map_chr( download_date , ~ anydate(.x)  )
   
@@ -53,6 +58,7 @@ most_recent_file = function( file_list_with_date ){
   
   return ( file )
 }
+
 
 Month_Year = function( x ){ yearmonth( zoo::as.yearmon( x , "%Y%m") ) }
 
@@ -110,12 +116,44 @@ shift_legend3 <- function(p) {
 
 ```
 
+
 ```{css my-css, echo = FALSE}
 # .chart-title {
 #     font-size: 48px;
 # }
 .tab-content {
   overflow: visible;
+}
+.selectize-control .selectize-dropdown {
+  position: static !important;
+}
+.select-control .select-dropdown {
+  position: static !important;
+}
+
+/* Customize fonts */
+body, label, input, button, select { 
+  font-family: 'Helvetica Neue', Helvetica;
+  font-weight: 200;
+}
+h1, h2, h3, h4 { font-weight: 400; }
+
+#controls {
+  /* Appearance */
+  background-color: white;
+  padding: 0 20px 20px 20px;
+  cursor: move;
+  /* Fade out while not hovering */
+  opacity: 0.65;
+  zoom: 0.9;
+  transition: opacity 500ms 1s;
+  overflow-y: auto;
+}
+
+#controls:hover {
+  /* Fade in while hovering */
+  opacity: 0.95;
+  transition-delay: 0;
 }
 ```
 
@@ -124,41 +162,36 @@ Inputs {.sidebar data-width=300}
 
 ```{r input, echo=FALSE}
 inputPanel(
-  textInput( "data.directory", label = "Data directory:", 
-             value = "../dataDictionary/dhis2_dictionary/Formulas/" ,
-             width = '100%'
-             # , style = "font-size: 50%;"
-             ) ,
   
-  selectInput("country", label = "DHIS2 instance (Country) Folder:" , 
-              choices = NULL , 
-              selected = NULL ) , 
-              # choices = c("Burkina Faso", "Guinea", "Malawi" , "Nigeria" ) ,
-              # selected = "Malawi" ),
   
-  selectInput("indicator", label = "Indicator:" , 
-              choices = NULL , 
-              selected = NULL ) ,
+selectInput("Admn2", label = "Admn2" , 
+              choices = NULL, 
+              selected = NULL ,
+              multiple = TRUE ) ,
+
+selectInput("Admn3", label = "Admn3" ,
+              choices = NULL,
+              selected = NULL ,
+              multiple = TRUE ) ,
+
+selectInput("Admn4", label = "Admn4" ,
+              choices = NULL,
+              selected = NULL  ,
+              multiple = TRUE  ) ,
   
   selectInput("data", label = "DataElement/Category" , 
               choices = NULL , 
-              selected = NULL ) ,
+              selected = 1 ,
+              multiple = TRUE , selectize = TRUE ) ,
   
   selectInput("source", label = "Original/Cleaned" , 
               choices = c( 'Original', 'Cleaned' ) , 
               selected = 'Original' ) ,
   
-  selectInput("level", label = "Organization Level:" ,
-              choices = c( 'leaf' ) ,
-              selected = NULL ) ,
-  
   selectInput("split", label = "Split Data By:" , 
               choices = "None" , 
               selected = "None" ) , 
   
-  
-  checkboxInput( "exclude_recent_month" , label ='Exclude most recent month?',
-               value = TRUE  ) ,
   
   checkboxInput( "total", label ='Total all categories', value = FALSE ) ,
   
@@ -218,9 +251,11 @@ observeEvent( input$screenshot , {
 
 
 data.folder = reactive({
+  print( 'data.folder:')
   req( input$country )
   req( input$data.directory  )
-  file.dir( country = input$country , dir.base = input$data.directory )
+  data.folder = file.dir( country = input$country , dir.base = input$data.directory )
+  print( 'data.folder is '); print( data.folder )
 })
 
 formula.file = reactive({ 
@@ -261,12 +296,18 @@ formula_elements =  reactive({
 
 })
 
-observe({  updateSelectInput( session, 'indicator' , choices =  formula.names() ) } )
+observe({  updateSelectInput( session, 'indicator' , 
+                              choices =  formula.names() ,
+                              selected = NULL ) } )
 
 observe({  updateSelectInput( session, 'split' , 
                               choices =  c('None', names( dataset() )) ) } )
 
-observe({  updateTextInput( session, 'startingYear' , value  =   min( year(d()$Month)) )  })
+observe({  updateTextInput( session, 'startingYear' , 
+                            value  =   min( d() %>% 
+                                   pull( !! rlang::sym( period() ) ) %>%
+                                     year ))  
+  })
 
 ```
 
@@ -301,72 +342,77 @@ rds_data_file = reactive({
     
   dir.files = country_files()
 
-  indicator = input$indicator
+  indicator = paste0( "_" , input$indicator , "_" )
   print( 'indicator:' ); print( input$indicator )
   
   file.type = 'rds' # input$file.type 
-  file.other = 'Seasonal_' # input$file.other
+  file.other = 'Seasonal' # input$file.other
+  file.label = 'formulaData'
   
   all.levels.data.files = dir.files[ grepl( 'All levels' , dir.files) &
-                                       grepl( file.type , dir.files) &
-                                       grepl( file.other, dir.files, fixed = TRUE  )]
+          grepl( file.type , dir.files) &
+          grepl( file.other, dir.files, fixed = TRUE  ) &
+          grepl( file.label, dir.files, fixed = TRUE  )]
 
   print('all levels data files:') ; print( all.levels.data.files )
   
   f.indicator = grepl( indicator , all.levels.data.files , fixed = TRUE )
+  
   print("f.indicator:" ) ;  print( f.indicator ) 
   
   if ( sum( f.indicator ) == 0 ) return( NULL )
   
   if ( !dir.exists( data.folder() )) return( NULL )
   
-  data_file = paste0( data.folder() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
+  data_file = paste0( data.folder() , all.levels.data.files[f.indicator]  )  # %>% most_recent_file()
+  
+  print( 'data_file is'); print( data_file )
   
   if ( !any(file.exists( data_file ))) return( NULL )
+
+  print( "data file exists =" ); print( any(file.exists( data_file )) )
+  return( data_file )
+
+})
+
+xlxs_data_file = reactive({
+  req( country_files() )
+  req( input$indicator )
+
+  dir.files = country_files()
+
+  indicator = input$indicator
+  print( 'indicator:' ); print( input$indicator )
+
+  file.type = 'xlxs' # input$file.type
+  file.other = '' # input$file.other
+
+  all.levels.data.files = dir.files[ grepl( 'All levels' , dir.files) &
+                                       grepl( file.type , dir.files) &
+                                       grepl( file.other, dir.files, fixed = TRUE  )]
+
+  print('all levels data files:') ; print( all.levels.data.files )
+
+  f.indicator = grepl( indicator , all.levels.data.files , fixed = TRUE )
+  print("f.indicator:" ) ;  print( f.indicator )
+
+  if ( sum( f.indicator ) == 0 ) return( NULL )
+
+  if ( !dir.exists( dir() )) return( NULL )
+
+  data_file = paste0( dir() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
+
+  if ( !file.exists( data_file )) return( NULL )
 
   print( "data file:" ); print( data_file )
   return( data_file )
 
 })
 
-# xlxs_data_file = reactive({
-#   req( country_files() )
-#   req( input$indicator )
-#     
-#   dir.files = country_files()
-# 
-#   indicator = input$indicator
-#   print( 'indicator:' ); print( input$indicator )
-#   
-#   file.type = 'xlxs' # input$file.type 
-#   file.other = '' # input$file.other
-#   
-#   all.levels.data.files = dir.files[ grepl( 'All levels' , dir.files) &
-#                                        grepl( file.type , dir.files) &
-#                                        grepl( file.other, dir.files, fixed = TRUE  )]
-# 
-#   print('all levels data files:') ; print( all.levels.data.files )
-#   
-#   f.indicator = grepl( indicator , all.levels.data.files , fixed = TRUE )
-#   print("f.indicator:" ) ;  print( f.indicator ) 
-#   
-#   if ( sum( f.indicator ) == 0 ) return( NULL )
-#   
-#   if ( !dir.exists( dir() )) return( NULL )
-#   
-#   data_file = paste0( dir() , all.levels.data.files[f.indicator]  )  %>% most_recent_file()
-#   
-#   if ( !file.exists( data_file )) return( NULL )
-# 
-#   print( "data file:" ); print( data_file )
-#   return( data_file )
-# 
-# })
-
 # updateSelectInput( "indicator", choices = )
 
 dataset = reactive({
-  
+  print( 'dataset:')
   req( rds_data_file() )
   
   print("ingesting..."); 
@@ -410,7 +456,7 @@ dataSets = reactive({
 
 observe({
   print( 'updating datsets' )
-  req( dataSets )
+  req( dataSets() )
   if ( any( nchar( dataSets() > 0 ) ) ){ 
     updateSelectInput( session, 'merge' , 
                        choices =  dataSets() 
@@ -418,25 +464,80 @@ observe({
   }
 } )
 
+most_recent_period = reactive({
+  req( period() )
+  print( 'most_recent_period' ); print( period() )
+  print( names( dataset() ))
+  mrp = max( dataset() %>% 
+               pull( !! rlang::sym( period() ) ), na.rm = TRUE ) 
+  # mrp = max( dataset()[ , 'Month'] , na.rm = TRUE ) 
+  # mrp = max( dataset()$Month , na.rm = TRUE ) 
+  print( 'most recent period is'); print( mrp )
+  
+  # if ( input$exclude_recent_month ){
+  #   if ( period() == "Month" ) mrp = mrp - month(1)
+  #   if ( period() == "Week" ) mrp = mrp - week(1)
+  # } 
+  
+  print( 'mrp:') ; print(mrp)
+  return( mrp )
+})
 
+period = reactive({
+  print('period()')
+  req(dataset())
 
-most_recent_month = reactive({
-  mrm = max( dataset()$Month ) 
-  if ( input$exclude_recent_month ) mrm = mrm - month(1)
-  print( 'mrm:') ; # print(mrm)
-  return( mrm )
+  weekly = any( map_lgl( dataset() , 
+                         ~any(class(.x) %in% 'yearweek'  )) )
+  
+  period = ifelse( weekly, "Week", "Month" )
+  print('end period()'); print( period )
+  return( period  )
 })
 
 observe({
   print( 'updating data_choices' )
-  updateSelectInput( session, 'data' , choices =   unique( dataset()$data )  ) 
+  updateSelectInput( session, 'data' , 
+                     choices =   unique( dataset()$data ) ,
+                     selected = 1 ) 
 } )
 
 
 d = reactive({
- req( dataset() )
+
+  req( dataset() )
+  req( period() )
+  print( 'd:')
   
   data = dataset()  
+  .period = period()
+  
+  if ( !is_empty( input$Admn2 ) ){
+    print( paste( 'filtering data by' , levelNames()[2] , "=" , input$Admn2 ) )
+    data = data %>% 
+      filter( !! rlang::sym( levelNames()[2])  %in%   input$Admn2  )
+    
+    print( paste( 'data filtered by Admn2 has' , nrow( data ), 'rows' ))
+    # glimpse( data )
+  }
+  
+    if ( !is_empty( input$Admn3 ) ){
+    print( paste( 'filtering data by' , levelNames()[3] , "=" , input$Admn3 ) )
+    data = data %>% 
+      filter( !! rlang::sym( levelNames()[3])  %in%   input$Admn3  )
+    
+    print( paste( 'data filtered by Admn3 has' , nrow( data ), 'rows' ))
+    # glimpse( data )
+    }
+  
+if ( !is_empty( input$Admn4 ) ){
+    print( paste( 'filtering data by' , levelNames()[4] , "=" , input$Admn4 ) )
+    data = data %>% 
+      filter( !! rlang::sym( levelNames()[4])  %in%   input$Admn4  )
+    
+    print( paste( 'data filtered by Admn4 has' , nrow( data ), 'rows' ))
+    # glimpse( data )
+  }
   
   print( 'nrow( d )' ); print( nrow( data ))
   
@@ -446,8 +547,8 @@ d = reactive({
     data = data %>% filter( levelName  %in% input$level  )
   }
   
-  if ( input$exclude_recent_month ) data = data %>% 
-    filter( Month <= most_recent_month() )
+  # if ( input$exclude_recent_month ) data = data %>% 
+  #   filter( !! rlang::sym( period() ) <= most_recent_period() )
   
   if ( input$source %in% 'Original' ){
     data = data %>% mutate( dataCol = original )
@@ -461,7 +562,10 @@ d = reactive({
   }  
   
   # print( 'd: max period ' ); print( max( d$period ))
-  print( 'd: max Month ' ); print( max( data$Month ))
+  print( 'd: max period ' ); 
+  print( max( data %>% pull( !! rlang::sym( .period )  ) , 
+              na.rm = TRUE ))
+  # print( max( data$Month , na.rm = TRUE ))
   
   # Modify variables used for cleaning data so that FALSE when NA -- meaning it failed prior cleaning step, and TRUE means data is ok
   if ('mad15' %in% names( data )) data = data %>% mutate( mad15 = ifelse( value & is.na( mad15)|!mad15, FALSE, TRUE ) )
@@ -470,62 +574,142 @@ d = reactive({
   if ('seasonal5' %in% names( data )) data = data %>% mutate( seasonal5 = ifelse( value & is.na( seasonal5)|!seasonal5, FALSE, TRUE ) )
   if ('seasonal3' %in% names( data )) data = data %>% mutate( seasonal3 = ifelse( value & is.na( seasonal3)|!seasonal3, FALSE, TRUE ) )
     
+  print( 'end d()' )
   return( data )
 })
 
 
-
-
-
 ```
+
+
+
+Data
+===================================
+
+```{r}
+# inputPanel(
+splitLayout( 
+  textInput( "data.directory", label = "Data directory:", 
+             value = "../dataDictionary/dhis2_dictionary/Formulas/" ,
+             width = '100%'
+             # , style = "font-size: 50%;"
+             ) 
+  ) 
+
+ 
+  selectInput("country", label = "DHIS2 instance (Country) Folder:" , 
+              choices = NULL 
+              ) 
+  
+ selectInput("level", label = "Organization Level:" ,
+              choices = c( 'leaf' ) ,
+              selected = NULL ) 
+ 
+ checkboxInput('hts', label = "Use administrative hierarchy", 
+               value = TRUE ) 
+  
+ selectInput("indicator", label = "Indicator:" , 
+              choices = NULL , 
+              selected = FALSE,
+              multiple = FALSE ,
+              selectize = FALSE, 
+              size = 4  ##needed for `selected = FALSE` to work ) 
+)
+ 
+splitLayout( 
+  textInput( "data.intervention", label = "Data intervention:", 
+             value = "" ,
+             width = '100%'
+             # , style = "font-size: 50%;"
+             ) ,
+  
+  selectInput("intervention.key", label = "Intervention key:" , 
+              choices = NULL , 
+              selected = NULL ) 
+  
+)
+
+  checkboxInput( "exclude_recent_month" , label ='Exclude most recent month?',
+               value = TRUE  ) 
+```
+
+
+Reporting 
+====================================
+
+Row 
+-------------------------------------
 
 ```{r data.reports}
 
 
 orgunit.reports = reactive({ 
   req( input$data )
-  req( most_recent_month() )
+  req( most_recent_period() )
+  req( period() )
   
-  mrm = most_recent_month()
+  print( 'orgunit.reports()' )
+  
+  mrm = most_recent_period()
   
   year_var = 'calendar_year' # ifelse( input$calendar_year , 'calendar_year' , 'months12' )
   
   data = d()
   
-  if ( !input$count.any & !input$total  )  data = data %>% filter( data %in% input$data )
-  
-  o.r = 
+  if ( !input$count.any & !input$total  )  data = 
+    data %>% filter( data %in% input$data )
+    
+  .period = period()
+
+  o.r. = 
     data %>% as_tibble() %>% ungroup %>%
     
     mutate(
 
-    calendar_year = year( Month )
+    calendar_year = year( !! rlang::sym( .period )  )
      
   ) %>%
-  rename( year =  {{ year_var }} ) %>%
-  group_by( year , orgUnit ) %>%
-  summarise( n_months = n_distinct( Month ) 
-             # , max_month = max( Month ) 
-             ) %>%
-  mutate( n_months = factor( n_months) ,
+  rename( year =  {{ year_var }} ) 
+  
+    
+  o.r. = setDT(o.r.)[, .( n_periods = uniqueN( get( .period ) )), 
+                   by = c( 'year' , 'orgUnit' ) ] %>%
+    as_tibble() %>%
+  # group_by( year , orgUnit ) %>%
+  # summarise( n_periods = n_distinct( !! rlang::sym( period() )  ) 
+  #            # , max_month = max( Month ) 
+  #            ) 
+  mutate( n_periods = factor( n_periods ) ,
           year = factor( year ) )
   
-  print( 'o.r:') ; # print(head(o.r))
-  return(o.r)
+  #print( 'o.r:') ; # print(head(o.r))
+  print( 'end orgunit.reports' )
+  return(o.r.)
 })
 
 annual.reports = reactive({ 
   req( orgunit.reports() )
+  print( 'annual reports()' )
   
-  orgunit.reports() %>%
-  group_by( year ,  n_months ) %>%
-  summarise( n = n() )
+  or = orgunit.reports() 
+  # print( 'annual reports() or:' ); print( names(or))
+  
+  ar = setDT(or)[, .( n = .N ), 
+                   by = c( 'year' , 'n_periods' ) ] %>%
+    as_tibble()
+  
+  # group_by( year ,  n_periods ) %>%
+  # summarise( n = n() )
+  print( 'end annual reports' )
+  return( ar )
 })
 
 orgunit.monthly.reports = reactive({ 
   req( input$data )
+  print( 'orgunit.monthly.reports' )
   
-  mrm = most_recent_month()
+  # mrp = most_recent_period()
+  .period = period()
   
   year_var = 'calendar_year' # ifelse( input$calendar_year , 'calendar_year' , 'months12' )
   
@@ -537,36 +721,57 @@ orgunit.monthly.reports = reactive({
     data %>% as_tibble() %>% ungroup %>%
 
     mutate(
-           calendar_year = year( Month )
+           calendar_year = year( !! rlang::sym( .period )  )
      
   )  %>%
   rename( year =  {{ year_var }} ) 
   # %>%
   # mutate( year = factor( year ) )
-  
-  print( 'o.m.r:') ; # print(head(o.m.r))
+
+  print( 'end orgunit.monthly.reports' )
+  # print(head(o.m.r))
   return(o.m.r)
 })
 
 monthly.reports = reactive({ 
   req( orgunit.monthly.reports() )
+  req( period() )
+  print( 'monthly reports()' )
   
-  m.r = orgunit.monthly.reports() %>%
-  group_by( year , Month  ) %>%
-  summarise( n = n_distinct( orgUnit ) )
+  .period = period()
+ 
+  o.m.r = orgunit.monthly.reports() 
   
-  print('m.r') ; # glimpse(m.r)
+  # print('monthly.reports() o.m.r'); print( names(o.m.r) )
+  
+  m.r = setDT(o.m.r)[, .( n = uniqueN( orgUnit ) ), 
+                   by = c( "year" , .period  ) ]  %>%
+    as_tibble()
+  
+  # group_by( year , !! rlang::sym( .period )   ) %>%
+  # summarise( n = n_distinct( orgUnit ) )
+  
+  # print('m.r') ; glimpse(m.r)
+  print( 'end monthly reports()' )
+  # glimpse( m.r)
   return(m.r)
 })
 
 
 facilities = reactive({
+  print( 'facilities' )
   req( orgunit.reports() )
   
-  orgunit.reports() %>%
-  ungroup() %>%
-  summarise( Total = n_distinct( orgUnit ) ) %>%
-  pull( Total)
+  f = orgunit.reports() %>%
+  ungroup() 
+  
+  f = setDT(f)[, .( Total = uniqueN( orgUnit ))] %>%
+    as_tibble() %>%
+    # summarise( Total = n_distinct( orgUnit ) ) %>%
+    pull( Total)
+  
+  print( 'end facilities' )
+  return(f)
 })
 
 ```
@@ -588,7 +793,6 @@ observeEvent( input$plot1_brush  , {
   print( "plot1 selected$x:" ) ;  print( paste( selected$x , selected$panel ) )
   return( selected )
 })
-
 
 observeEvent( input$plot2_brush  , {
   # glimpse( input$plot1_brush )
@@ -620,7 +824,8 @@ selectedOUs <- reactive({
      }
 
      mr = data %>% as_tibble %>%
-       filter( year( Month ) >= as.integer( input$startingYear ) ) %>% distinct( Month, orgUnit ) %>%
+       filter( year( !! rlang::sym( period() )  ) >= as.integer( input$startingYear ) ) %>% 
+       distinct( !! rlang::sym( period() ) , orgUnit ) %>%
        group_by( orgUnit ) %>%
        summarise( n = n() ) %>%
        arrange( desc( n ))
@@ -638,7 +843,7 @@ selectedOUs <- reactive({
   if( is.null( selected$x ) ) return( NULL )
   
   if ( selected$chart == 1 ){
-      select_month =  as.numeric( orgunit.reports()$n_months ) %in% selected$x
+      select_month =  as.numeric( orgunit.reports()$n_periods ) %in% selected$x
       selectedRows = select_month &
          orgunit.reports()$year %in% selected$panel 
       s = orgunit.reports()[ selectedRows, ]$orgUnit %>% unique
@@ -646,28 +851,35 @@ selectedOUs <- reactive({
       
 
     } else {
-      select_month = month( orgunit.monthly.reports()$Month ) %in% selected$x
+      select_month = month( orgunit.monthly.reports() %>%
+                              pull( !! rlang::sym( period() ) ) ) %in% selected$x
       selectedRows = select_month &
-        year( orgunit.monthly.reports()$Month ) %in% selected$panel
+        year( orgunit.monthly.reports() %>%
+                pull( !! rlang::sym( period() ) ) ) %in% selected$panel
       s = orgunit.monthly.reports()[ selectedRows, ]$orgUnit %>% 
         unique
       
       
     }
 
-      print( "selected$x selectedOUs:" ); toc()  # print( selectedOUs )
+      print( "end selectedOUs:" ); toc()  # print( selectedOUs )
       return( s )
     })
   
 x.annual = reactive({
-  # req( keeprows() )
+  print( 'x.annual()' )
   tic()
   x.a = orgunit.reports() %>% 
-        filter( orgUnit %in% selectedOUs() ) %>%  
-        group_by( year , n_months ) %>%
-        summarise( n =  n_distinct( orgUnit ) )
+        filter( orgUnit %in% selectedOUs() )   # %>%  
+        # group_by( year , n_periods ) %>%
+        #   summarise( n =  n_distinct( orgUnit ) )
   
-  print('x.annual:') ; toc()  # print( x.a )
+  # data.table speed up over dplyr
+  x.a = setDT(x.a)[, .( n = uniqueN( orgUnit )), 
+                   by = c( 'year' , 'n_periods' ) ]  %>%
+    as_tibble()
+
+  print('end x.annual:') ; toc();  # print( x.a )
   return( x.a )
   
 })
@@ -675,28 +887,32 @@ x.annual = reactive({
 x.months = reactive({
   # req( keeprows() )
   tic()
-  x.m = orgunit.monthly.reports() %>% 
-        filter( orgUnit %in% selectedOUs() ) %>% 
-        group_by( year , Month ) %>%
-        summarise( n = n_distinct( orgUnit ) )
+  print( 'x.months()' )
   
-  print('x.months:') ; toc() # glimpse( x.m )
+  .period = period()
+  
+  x.m = orgunit.monthly.reports() %>% 
+        filter( orgUnit %in% selectedOUs() ) 
+  
+  x.m = setDT(x.m)[, .( n = uniqueN( orgUnit )), 
+                   by = c( 'year' , .period )   ]  %>%
+    as_tibble()
+  
+  
+  # %>%
+  #       group_by( year , !! rlang::sym( period() )  ) %>%
+  #       summarise( n = n_distinct( orgUnit ) )
+  
+  print('end x.months:') ; toc() ; # glimpse( x.m )
   return( x.m )
   
 })
 
 
 ```
-
-
-Reporting 
-====================================
-
-Row 
--------------------------------------
   
 
-### Number of Facilties Reporting by Month (plot_reporting_by_month)
+### Number of Facilties Reporting each Period (plot_reporting_by_month)
 
 ```{r}
 plotOutput( 'plot_reporting_by_month' , 
@@ -712,11 +928,23 @@ plotOutput( 'plot_reporting_by_month' ,
 
 plot2 = reactive({
   req( monthly.reports() )
+  print('plot2')
+  .period = period()
+  
+  # save data for testing ggplot options
+  saveRDS( monthly.reports(), 'plot2_data.rds' )
   
   if ( length( monthly.reports()$year) > 0  ) {
   
+  if ( .period == "Month" ){
+            .breaks = 1:12
+  } else {
+            .breaks = seq(2, 53, 4)
+  }
+
   g = ggplot( monthly.reports() %>% mutate( facilities = 'All' ), 
-              aes( x = month(Month) , y = n  
+              aes( x =  !! rlang::sym( .period ) 
+                   , y = n  
                    , group = facilities
                    , color = facilities 
                    ) ) +
@@ -725,7 +953,10 @@ plot2 = reactive({
     geom_line( ) +
     geom_hline( yintercept = facilities() ) +
     facet_wrap( ~ year ) +
-    scale_x_continuous( 'Month' , breaks= 1:12 )  +
+    # scale_x_discrete( .period 
+    #                     , breaks = .breaks
+    #                     # , labels  = as.character( .breaks )
+    #                     )  +
     ylim( 0 , NA ) +
     scale_color_manual( values = c( 'All' = 'black' , 
                                     'Selected'= 'brown' ) ) +
@@ -742,6 +973,9 @@ plot2 = reactive({
   return( shift_legend3(g) )
   # return( g )
   }
+  
+  print('end plot2')
+  return( g )
 })
 
 output$plot_reporting_by_month <- renderPlot({  plot2()  })
@@ -797,7 +1031,7 @@ htmlOutput("x_value")
     if ( is.null( selected$x ) ) return("")
     
     else {
-      lvls <- levels( annual.reports()$n_months )
+      lvls <- levels( annual.reports()$n_periods )
       panel = selected$panel
       
       name <- lvls[ round( selected$x ) ]
@@ -826,15 +1060,30 @@ plotOutput( 'plot_reports_in_a_year' ,
 ```{r plot1 }
 
 plot1 = reactive({
+  print( 'plot1' )
   req( annual.reports() )
+  req( period() )
+  .period = period()
+  
+  # save data for testing ggplot options
+  saveRDS( annual.reports() , 'plot1_data.rds' )
+  
   
   if ( length( annual.reports()$year) > 0  ) {
-
+    
+  if ( .period == "Month" ){
+            .breaks = 1:12
+  } else {
+            .breaks = seq(2, 53, 4)
+  }
+    
   g = ggplot( annual.reports() , 
-              aes( x = n_months , y = n ) ) +
+              aes( x = n_periods , y = n ) ) +
     geom_col() + 
-    scale_x_discrete( 'Number Months Reported' , 
-                        limits= 1:12  )  +
+    scale_x_discrete( 'Number Months Reported' 
+                      , breaks = .breaks   
+                      , labels  =  .breaks
+                      )  +
     geom_hline( yintercept = facilities() ) +
     facet_wrap( ~year )
   
@@ -842,6 +1091,7 @@ plot1 = reactive({
     g = g + geom_col( data = x.annual() , fill = 'brown' ) 
   }
 
+  print( 'end plot1' )
   return(g)
   }
 })
@@ -865,7 +1115,7 @@ plotOutput( 'plot_values' ,
     )
 
 plotData = reactive({
-  print( 'plotData()')
+   print( 'plotData()')
    req( d() )
    req( input$data )
   
@@ -888,15 +1138,18 @@ plotData = reactive({
     # compare original and cleaned
     # print( paste('original - dataCol = ', sum( data$original , na.rm = T ) - sum( data$dataCol , na.rm = T )) )
   
-    print( 'names( plotData )')  ; print( names( data )) 
+    print( 'end  plotData()')  ; # print( names( data )) 
   return( data )
 })
 
-
 group_by_cols = reactive({
     # req( input$split )
-    group_by_cols =  c( 'Month', 'orgUnit', 'Facilities',
-                        levelNames() , 'dataSet' ) 
+    print( "group_by_cols()")
+    group_by_cols =  c( period() , 'orgUnit', 'Facilities',
+                        'dataSet' ) 
+    
+    group_by_cols = c( group_by_cols, levelNames() )
+  
     
     if ( input$split != 'None' ) group_by_cols = c( group_by_cols , input$split )
     
@@ -906,7 +1159,7 @@ group_by_cols = reactive({
     # # If not merge when total, show separate datsets
     # if ( !input$merge & input$total ) group_by_cols = c( group_by_cols , 'dataSet' )
     #   
-    print( "group_by_cols:") ; print( group_by_cols )
+    print( "end group_by_cols()") ; #print( group_by_cols )
     return( unique( group_by_cols ) )
 
 })
@@ -914,30 +1167,29 @@ group_by_cols = reactive({
 data.total = reactive({
   req( plotData() )
   req( group_by_cols() )
+  req( period() )
   print( 'data.total()')
+  
+  .period = period()
   # if ( input$merge & input$total ){
     
     .group_by_cols = unique( c( group_by_cols() ) )
-    print( '.group_by_cols:' ) ; print( .group_by_cols )
+    # print( '.group_by_cols:' ) ; print( .group_by_cols )
 
-    dataset_group_by_cols  = rlang::syms( .group_by_cols )
-
-    # combined_group_by_cols  = rlang::syms( 
-    #   unique( setdiff( .group_by_cols , 'dataSet' )  ) )
-    # 
-    
     # Total categories by facilities and datasets
-    data = 
-      plotData() %>% 
-      group_by(  !!! dataset_group_by_cols  ) %>%
-      summarise( total = sum( dataCol , na.rm = TRUE  ) ) 
-      
+    data = plotData() 
+    # %>% 
+    #   group_by(  !!! dataset_group_by_cols  ) 
+
+    data = setDT(data)[ , .( total = sum( dataCol , na.rm = TRUE  ) ) ,
+                           by = .group_by_cols ] %>% 
+      as_tibble()
     
     # Merge  datasets 
     # Set all dataSets to Combined and re-summaries taking mean
-    print( 'data.total datasets' ); print( dataSets() )
-    print( 'input$merge ') ; print( input$merge )
-    print( 'data datsets ' ) ; print( unique(data$dataSet) %>%                                        str_replace_all(fixed("\r"), ""))
+    # print( 'data.total datasets' );  print( dataSets() )
+    # print( 'input$merge ') ; print( input$merge )
+    # print( 'data datsets ' ) ;  print( unique(data$dataSet) %>%                                        str_replace_all(fixed("\r"), ""))
     
     merge = length( input$merge ) > 1 
     if ( merge ){
@@ -945,13 +1197,18 @@ data.total = reactive({
 
       # MErge datasets
       dataMerge = data %>%
-      mutate( dataSet = dataSet %>% str_replace_all(fixed("\r"), "") ) %>%
-      filter( dataSet %in% input$merge ) %>%
-      mutate( dataSet = 'Combined' )  %>%
-      group_by(  !!! dataset_group_by_cols  ) %>%
-      summarise( total = mean( total , na.rm = TRUE  ) )
+        mutate( dataSet = dataSet %>% str_replace_all(fixed("\r"), "") ) %>%
+        filter( dataSet %in% input$merge ) %>%
+        mutate( dataSet = 'Combined' ) 
+ 
+      # data.table sum
+      print( 'merge data.table sum') ; 
+      dataMerge = setDT( dataMerge )[ , .(total = mean( total , 
+                                             na.rm = TRUE  )) ,
+                           by = .group_by_cols ] %>% 
+        as_tibble()
       
-      print( 'dataMerge' );  glimpse( dataMerge )
+      print( 'dataMerge done' );  # glimpse( dataMerge )
       
       dataNotMerge = data %>%
         mutate( dataSet = dataSet %>% 
@@ -962,41 +1219,48 @@ data.total = reactive({
       
       if ( nrow( dataNotMerge ) > 0 & input$dataset ){
         
-       data = bind_rows( dataMerge , 
+       data = bind_rows( dataMerge ,
                          dataNotMerge %>%
-                           mutate( dataSet = 'Combined' )  
-                         ) %>%
-         group_by(  !!! dataset_group_by_cols  ) %>%
-         summarise( total = sum( total , na.rm = TRUE  ) )
-        
+                           mutate( dataSet = 'Combined' )
+                         )  
+
+       data = setDT( data )[ , .(total = sum( total , na.rm = TRUE  ) ) ,
+                    by = .group_by_cols ] %>%
+         as_tibble()
+
        } else  {
         data  = bind_rows( dataMerge , dataNotMerge )
+        print( 'data.total duplicates' )  
+        # saveRDS( data, 'data.rds' )
+        # print( data %>% duplicates %>% glimpse )
           } 
     }
 
   
   print( 'data.total key_cols:')
   
-  key.cols = setdiff( group_by_cols() , 'Month' ) 
+  key.cols = setdiff( group_by_cols() , .period ) 
       
-  print( key.cols )
-    
+  # print( key.cols )
+  
   data.total = 
       data %>% 
-      as_tsibble( index = Month, 
+      as_tsibble( index = !! rlang::sym( .period )  , 
                   key =  all_of(  {{key.cols}} ) ) %>%
-      fill_gaps( .full = TRUE  ) %>%
+      # fill_gaps( .full = TRUE  ) %>%
       mutate( 
               total = replace_na( total , 0) 
               )  # for plotting, replace missing with zero 
   
-    return( data.total )
+  print( 'data.total finalized' ); # print( toc())
+  return( data.total )
     
 
 })
 
 num_facilities = reactive({
   req( data.total() )
+  print('num_facilities()')
   .d = data.total()
   l = length( unique( .d$Facilities ) )
   print( paste( 'number of Facilities', l ) )
@@ -1005,6 +1269,7 @@ num_facilities = reactive({
 
 num_datasets = reactive({
   req( data.total() )
+  print('num_datasets()')
   .d = data.total()
   l = length( unique( .d$dataSet ) )
   print( paste( 'number of dataSets', l ) )
@@ -1012,9 +1277,15 @@ num_datasets = reactive({
 })
 
 hts = reactive({   
-  print( "hts..." )
+  print( "hts():" )
   adms = backtick( levelNames() )
-  hts = paste( adms, collapse = "/" )
+  
+  if (input$hts){ 
+    hts = paste( adms, collapse = "/" ) 
+  } else {
+    hts = paste( adms[1:3], collapse = "/" ) 
+  }
+  
   hts = paste( "(" , hts , ")" )
   
   # if >1 Facilities (ie. selected)
@@ -1035,31 +1306,29 @@ hts = reactive({
   # if ( length( selectedOUs() ) > 0  & !input$split %in% 'None' ) hts =
   #   paste( input$split ,  ' * Facilities * (', hts , ')' )
   
-  print( "hts:" ); print( hts )
+  print( "end hts():" ); print( hts )
   return( hts )
 })
 
 data.hts = reactive({
-  tic()
-  print( 'data.hts():' )
+  req( data.total() )
+
+  print( 'data.hts():' );   tic()
 
   .d = data.total()
-  print( 'data.hts data.total()' ) ; glimpse( .d )
-  
+
   .d = .d %>%
     aggregate_key(  .spec = !!rlang::parse_expr( hts() ) ,
                     total = sum( total , na.rm = T )
-                    ) %>%
-    fill_gaps( .full = TRUE  )
-    print( 'now hierarchical' );toc() 
-    
-    print( 'data.hts' ) ; glimpse( .d )
-    
+                    ) 
+  
+  print( 'end data.hts():' ) ; toc()
     return(.d)
 })
 
 aggregatePlotData = reactive({
    req( data.hts() )
+   print( 'aggregatePlotData()' )
   
   .d = data.hts() %>% 
       filter( 
@@ -1069,41 +1338,41 @@ aggregatePlotData = reactive({
        mutate( 
          grouping_var = 'Total' )
      
-     print( '.d in agg plot' ); # glimpse(.d)
-     
      if ( num_datasets() > 1 ){
+       print( 'num_datasets()>1:') ;
        .d = .d %>% 
        filter( !is_aggregated( dataSet ) ) %>%
        mutate( dataSet = as.character( dataSet ) %>%
            str_remove_all( "<aggregated>" ) ,
            grouping_var = dataSet )
-    
+       print( unique(.d$dataSet))
      }  
      
      if ( num_facilities() > 1 ){
+       print( 'num_facilities()>1:') ; 
        .d = .d %>% 
        filter( !is_aggregated( Facilities )  ) %>%
        mutate( Facilities = as.character( Facilities ) %>%
            str_remove_all( "<aggregated>" )  )
        
-       print( 'Facilities:') ; print( unique(.d$Facilities))
+       print( unique(.d$Facilities))
      }  
         
     # if split, remove aggregate grouping
      if ( !input$split %in% 'None' ){
-       print( 'input split:') ; print( input$split )
+       print( '!input split none') ; print( input$split )
        .d = .d %>%
          filter( !is_aggregated( !! rlang::sym( input$split ) ) 
          ) %>%
          mutate( grouping_var = as.character( 
            !! rlang::sym( input$split ) )
          )
-       print( '.d  aggregated split'); 
        print( unique(.d$grouping_var) )
        # print( glimpse( .d ))
        
      } 
      
+     print( 'end aggregatePlotData()' )
      return( .d )
  
 })
@@ -1112,6 +1381,7 @@ plotAgregateValue = reactive({
   
   req( aggregatePlotData() )
   req( input$split )
+  print( 'plotAgregateValue():' )
 
   .d = aggregatePlotData()
   
@@ -1129,8 +1399,9 @@ plotAgregateValue = reactive({
   
 
   g = .d %>% 
+    fill_gaps( .full = TRUE  ) %>%
     # autoplot( vars( total , grouping_var ) )
-    ggplot( aes(x = Month, y = total
+    ggplot( aes(x = !! rlang::sym( period() ) , y = total
              , group = grouping_var  
              , colour =  grouping_var
             ) )  +
@@ -1163,10 +1434,14 @@ plotAgregateValue = reactive({
   if ( length( selectedOUs() ) > 0 ) g =
   g + facet_wrap( vars( Facilities ) ,
                   scales = 'free' , ncol = 3 ) 
-    
+  
+  # Time scales
+  if ( period() %in% 'Month' )  g = g + 
+    scale_x_yearmonth( date_breaks = "1 year" )
+  if ( period() %in% 'Week' )  g = g + 
+    scale_x_yearweek( date_breaks = "1 year" )
+  
   g = g +
-
-    scale_x_yearmonth(date_breaks="1 year" ) +
     scale_y_continuous( label=comma, limits = .limits ) +
     labs( y = "" , x="" ,
           title = str_wrap( input$indicator , 200 ) ,
@@ -1175,6 +1450,7 @@ plotAgregateValue = reactive({
           ) +
     theme_minimal()  
     
+  print( ' end plotAgregateValue()' )
 
   return( g )
 })
@@ -1234,8 +1510,10 @@ ous = reactive({  print( 'reading ous file' ) ;
   })
 
 levelNames = reactive({ 
-  count( ous() %>% as_tibble, level, levelName ) %>% 
-    arrange( level ) %>% pull(levelName )
+  l = count( ous() %>% as_tibble, level, levelName ) %>% 
+    arrange( level ) %>% pull(levelName ) 
+  l = l[ !is.na(l) ]
+  return(l)
 })
 
 levels = reactive({ 
@@ -1603,9 +1881,12 @@ selectInput("filter_data", label = "Filter data:" ,
               choices = NULL , 
               selected = NULL  ) 
 
-  dates = reactive({ 
+dates = reactive({ 
     req( data.total() )
-    unique( data.total()$Month )  
+    print('dates()')
+    .period = period()
+    
+    unique( data.total() %>% pull( !! rlang::sym( .period )) )  
     })
 
 
@@ -1613,8 +1894,8 @@ selectInput("evaluation_month", label = "Starting evaluation:" ,
               choices = NULL , 
               selected = NULL ) 
 
-selectInput("horizon", label = "Evaluation period (months):" , 
-              choices = c(3,6,12,18,24) , 
+selectInput("horizon", label = "Number periods after intervention:" , 
+              choices = c(3,6,12,18,24,36) , 
               selected = 12 ) 
 
 
@@ -1685,29 +1966,19 @@ checkboxInput('reconcile', label = 'Reconcile models' ,
 
 ```{r}
 
+
 selectInput("agg_level", label = "Aggregate to" , 
               choices = NULL , 
               selected = 1  ) 
 
 
-selectInput("level2", label = "Level2" , 
-              choices = NULL, 
-              selected = 1  ) 
+checkboxInput( "facet_admin" , label ="Facet by admin",
+               value = FALSE  )
 
-selectInput("level3", label = "Level3" , 
-              choices = NULL, 
-              selected = 1  ) 
-
-selectInput("level4", label = "Level4" , 
-              choices = NULL, 
-              selected = 1  ) 
-
-checkboxInput( "facet_admin" , label ="Facet by sub-admin",
-               value = FALSE  ) 
 
 ```
 
-```{r}
+```{r adm_hierarchies}
 
 
 
@@ -1716,23 +1987,36 @@ observe({  updateSelectInput( session, 'agg_level' ,
                               selected = levelNames()[1] ) # 12 months before latest date
   } )
 
-# observe({  updateSelectInput( session, 'level2' , 
-#                               label = levels()[ level ==2 ,]$levelName ,
-#                               choices = admin_names(level = 2) , 
-#                               selected = 1 ) # 12 months before latest date
-#   } )
 
-# observe({  updateSelectInput( session, 'level3' , 
-#                               label = levels()[ level ==3 ,]$levelName ,
-#                               # choices = admin_names(level = 3) , 
-#                               selected = 1 ) # 12 months before latest date
-#   } )
-# 
-# observe({  updateSelectInput( session, 'level4' , 
-#                               label = levels()[ level ==4 ,]$levelName ,
-#                               # choices = admin_names( level = 4) , 
-#                               selected = 1 ) # 12 months before latest date
-#   } )
+observe({  updateSelectInput( session, 'Admn2' ,
+                              choices = unique( 
+                                dataset()[, levelNames()[2] ] ) ,
+                              selected = NULL 
+                              ) 
+  } )
+
+observe({  updateSelectInput( session, 'Admn3' ,
+                              choices = 
+                                dataset() %>% 
+                                  filter(
+                                  !! rlang::sym( levelNames()[2] ) %in% input$Admn2 ) %>% 
+                                  pull( !! rlang::sym( levelNames()[3]  ) ) %>% 
+                                          unique ,
+                              selected = NULL 
+                              ) 
+  } )
+
+observe({  updateSelectInput( session, 'Admn4' ,
+                              choices = 
+                                dataset() %>% 
+                                  filter(
+                                  !! rlang::sym( levelNames()[3] ) %in% input$Admn3 ) %>% 
+                                  pull( !! rlang::sym( levelNames()[4]  ) ) %>% 
+                                          unique ,
+                              selected = NULL 
+                              ) 
+  } )
+
 
 admin_names = function( level = NULL ){
   admin_names = ous() %>% 
@@ -1756,10 +2040,13 @@ Row
 
 ```{r forecast_plot}
 
-observe({  updateSelectInput( session, 'evaluation_month' , 
-                              choices = dates() , 
-                              selected = max( dates() ) - month(12) ) # 12 months before latest date
-  } )
+# observe({  updateSelectInput( session, 'evaluation_month' , 
+#                               choices =  dates()  , 
+#                               selected = ifelse( period() %in% 'Month' ,
+#                                                  max(  dates()  ) - month(12) ,
+#                                      max(  dates()  ) - week(52)            )
+#                               ) 
+#   } )
             
 
 observeEvent(
@@ -1812,7 +2099,7 @@ trendData = reactive({
   print( "input$agg_level:" ); print( input$agg_level )
 
 
-  print( "sub_agg_level:" ); print( sub_agg_level )
+  print( "sub_agg_level:" ); print( sub_agg_level() )
    
   # .d = data.hts() %>% 
   #     filter( 
@@ -1820,16 +2107,32 @@ trendData = reactive({
   #       , is_aggregated( !! rlang::sym( levelNames()[1] ) )
   #     ) 
   
+  sub_agg = sub_agg_level() 
+  print( 'sub agg level filter' ) ; print( sub_agg )
+  
   .d = .d %>% 
       filter( 
         ! is.na( !! rlang::sym( input$agg_level   ) ) 
         # next line is good for level 0
         , ! is_aggregated(  !! rlang::sym( input$agg_level   ) )
-        , is_aggregated( !! rlang::sym( sub_agg_level()  ) )
-
-      ) %>%
+      )
+  
+  print( '!is_empty(sub_agg)' ); 
+  print( sub_agg )
+  print(!is_empty(sub_agg)); 
+  print( class( sub_agg ));
+  if ( !is_empty(sub_agg) ){
+    print( 'filtering by sub_agg' )
+    .d = .d %>% filter( 
+          is_aggregated( !! rlang::sym( sub_agg  ) )
+    )
+  }
+    
+    .d = .d %>%
        mutate( 
-         grouping_var = 'Total' )
+         grouping_var = 'Total' ) %>%
+      fill_gaps( .full = TRUE  )
+
      
      print( '.d in trendData' ); # glimpse(.d)
      
@@ -1879,12 +2182,11 @@ trendData = reactive({
         total = ( total/ mean( .d$total , na.rm = TRUE ) ) -1
     )
   
-  print( 'trend data:'); print( class( .d ) ); # print(.d)
+  print( 'end trend data():'); #print( class( .d ) ); # print(.d)
 
   
   return( .d )
 })
-
 
 plotOutput( 'plot_trends' )
 
@@ -2017,7 +2319,7 @@ tsForecast = reactive({
       mutate( !! input$agg_level := 
                 as.character( !! rlang::sym( input$agg_level  ) ) )
   
-  print( 'fcast:' );  glimpse( fcast )
+  print( 'fcast:' );  #glimpse( fcast )
   return( fcast )
   })
 
@@ -2043,7 +2345,7 @@ MAPE = reactive({
   predicted = tsPreForecast() %>% as_tibble() %>% select(-total)
   actual =  trendData() 
   d = predicted %>%
-     inner_join( actual , by = 'Month' ) 
+     inner_join( actual , by = period() ) 
  
   e = d %>% as_tibble() %>%
         # group_by( orgUnit , data  )  %>%
@@ -2074,7 +2376,7 @@ key.mape = reactive({
   print('keyvars'); print( keyvars )
   
   truth = predicted %>% 
-     inner_join( actual , by = c( 'Month', keyvars  ) )  
+     inner_join( actual , by = c( period() , keyvars  ) )  
   
   print( 'truth'); print( truth )
   
@@ -2089,14 +2391,14 @@ key.mape = reactive({
                              na.rm = T ) / 
                        mean( pred , na.rm = T ) ,
                        NA ) ,
-          Month = nth( Month , mid_point ) ,
+          !! rlang::sym( period() )  := nth( !! rlang::sym( period() )  , mid_point ) ,
           actual = nth( actual , mid_point ) 
           ) %>%
   as_tibble() %>%
       mutate( !! input$agg_level := 
                 as.character( !! rlang::sym( input$agg_level  ) ) )
   
-  print( "mape"); print( glimpse(e ))
+  print( "mape"); #glimpse(e )
   return( e )
 })
 
@@ -2109,7 +2411,7 @@ MPE = reactive({
   actual =  trendData() 
   
   d = predicted %>%
-     inner_join( actual , by = 'Month' ) 
+     inner_join( actual , by = period() ) 
  
   e = d %>% as_tibble() %>%
         # group_by( orgUnit , data  )  %>%
@@ -2141,7 +2443,7 @@ key.mpe = reactive({
   print('keyvars'); print( keyvars )
   
   truth = predicted %>% 
-     inner_join( actual , by = c( 'Month', keyvars  ) )  
+     inner_join( actual , by = c( period(), keyvars  ) )  
   
   print( 'truth'); print( truth )
   
@@ -2155,14 +2457,14 @@ key.mpe = reactive({
                        mean( actual - pred  , na.rm = T ) / 
                        mean( pred , na.rm = T ) ,
                        NA ) ,
-          Month = nth( Month , mid_point ) , 
+          !! period()   := nth( !! rlang::sym( period() )  , mid_point ) , 
           actual = nth( actual , mid_point )
           ) %>%
   as_tibble()  %>%
       mutate( !! input$agg_level := 
                 as.character( !! rlang::sym( input$agg_level  ) ) )
   
-  print( "mpe"); print( glimpse(e ))
+  print( "mpe"); #glimpse(e )
   return( e )
 })
 
@@ -2175,7 +2477,8 @@ plotTrends = reactive({
   
   req( trendData() )
   req( input$split )
-
+  # req( input$evaluation_month )
+  print( 'plotTrends():' )
 
   .limits = if ( input$scale ){
     c( NA , NA ) } else { 
@@ -2184,7 +2487,7 @@ plotTrends = reactive({
   data.text = paste( unique( plotData()$data ), collapse = " + " )
   
   .d = trendData() 
-  print( 'ploTrends .d:'); glimpse(.d)
+  print( 'ploTrends .d:'); #glimpse(.d)
   
   if ( !input$filter_display %in% 'All' ) .d = .d %>% 
           filter( .data[[ input$split ]] %in%
@@ -2205,12 +2508,20 @@ plotTrends = reactive({
   if ( !input$legend ) g = g + 
     theme(legend.position = "none")
   
-  if ( input$agg_level != levelNames()[1] ){
+  # Determine number of agg levels available
+  # If only one, do not facet (causes error, perhaps because of autoplot?)
+  
+  num_agg_levels = count( .d %>% as_tibble , 
+                          !! rlang::sym( input$agg_level ) ) %>%
+    nrow()
+
+  # if ( input$agg_level != levelNames()[1] & input$facet_admin ){
+  if ( num_agg_levels  > 1 & input$facet_admin ){
     print( 'facets' )
     g = g +
     facet_wrap( vars(!! rlang::sym( input$agg_level ) ) ,
-                   scales = "free_y" ) 
-  } 
+                   scales = "free_y" )
+  }
   
   g = g +
 
@@ -2251,7 +2562,7 @@ plotTrends = reactive({
               label = paste( "MPE:\n" )
               ) +
     geom_label_repel( data =  key.mpe()
-               , aes( x = Month,  y = actual ,
+               , aes( x = !! rlang::sym( period() )  ,  y = actual ,
                label = percent( mpe , accuracy = 1.0 ) )
                )
   }
@@ -2264,8 +2575,9 @@ plotTrends = reactive({
     print( 'pre evaluation line ' )
     eval_date = as.Date(
       yearmonth( input$evaluation_month  ) - 
-        month( as.integer( input$horizon ))
+        month( as.integer( input$horizon ) )
       )
+    print( 'eval_date is' ); print( eval_date )
     g = g + 
     autolayer( tsPreForecast()
                , level = ci_levels()
@@ -2283,7 +2595,7 @@ plotTrends = reactive({
               label = paste( "MAPE:"  )
               ) +
     geom_label_repel( data =  key.mape()
-               , aes( x = Month,  
+               , aes( x = !! rlang::sym( period() )  ,  
                label = percent( mape, accuracy = 1.0 ) )
                , y = Inf
                )
@@ -2298,7 +2610,7 @@ plotTrends = reactive({
       as_tibble %>%
       mutate( !! input$agg_level := as.character( !! rlang::sym( input$agg_level  ) ) )
     
-    print( 'smooth .d.') ; print( glimpse(.d. ))
+    print( 'smooth .d.') ; #glimpse(.d. )
     g = g + 
     geom_smooth( data = .d. , 
                  alpha = .75 )
@@ -2332,7 +2644,7 @@ plotTrends = reactive({
   #   return( g )
   # } 
   #   
-  print( 'g' )  
+  print( 'end plotTrends():' )
   return( g )
 })
 

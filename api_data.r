@@ -214,8 +214,13 @@ translate_fetch = function( df , formulaElements = NULL , ous = NULL ){
   if ( is.null( ous )) ous = ous()
     
   # prepare formula elements as one row per de and coc
-  if ( count( formulaElements , dataElement ) %>%
-    filter( n > 1 ) %>% nrow == 0 ){
+  # prepare formula elements as one row per de and coc
+  multiple_dataElements = count( formulaElements , dataElement ) %>%
+    filter( n > 1 ) %>% nrow == 0 
+  multiple_categoryOptionCombos = count( formulaElements , categoryOptionCombo.ids ) %>%
+    filter( n > 1 ) %>% nrow == 0 
+  
+  if ( !multiple_dataElements |  !multiple_categoryOptionCombos ){
     
       de.coc = formulaElements  %>% 
       separate_rows( Categories , categoryOptionCombo.ids, sep = ";" ) %>%
@@ -268,7 +273,8 @@ api_data = function(      periods = "LAST_YEAR" ,
   if ( periods %in% 'months_last_3_years' ) periods = date_code( YrsPrevious = 3 )
   if ( periods %in% 'months_last_4_years' ) periods = date_code( YrsPrevious = 4 )
   if ( periods %in% 'months_last_5_years' ) periods = date_code( YrsPrevious = 5 )
-  
+  if ( periods %in% 'weeks_last_5_years' ) periods = date_code_weekly( YrsPrevious = 5 )
+
   if ( all( is.na( periods )  ) ) periods = date_code( YrsPrevious = 4 )
     
   period_vectors = strsplit( periods , ";" , fixed = TRUE )[[1]]

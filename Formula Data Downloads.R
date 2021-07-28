@@ -1,18 +1,18 @@
 # Testing dataset reporting downloads
 
 
-country = "Guinea"
+country = "DRC"
+ous_update = FALSE  
 QR = FALSE 
 
 # libraries and functions ####
-library(pacman)
-p_load( scales, knitr, scales ,  #gsubfn  for strapplyc, line 221 
+pacman::p_load( scales, knitr, scales ,  #gsubfn  for strapplyc, line 221
         tidyverse, progress , readxl, patchwork ,
         tsibble, fable, fabletools, feasts, slider, anomalize ,
-        gsubfn, proto , 
+        # gsubfn, proto ,
         furrr, tictoc, ggrepel , sf , ggspatial ,
         mdthemes, extrafont , hrbrthemes , openxlsx ,
-        data.tree, igraph , magrittr , progressr 
+        data.tree, igraph , magrittr , progressr
         )
 
 
@@ -63,10 +63,10 @@ formulas = formulas %>%
     )
 }
 
-# View( formulas )
+View( formulas )
 
 # Reorder 
-formula_order = formulas$Formula.Name %>% 
+formula_order = formulas$Formula.Name %>%
   map( ., ~ str_split(.x , ' '))  %>%
   map( 1 ) %>% map_chr( 1 ) %>% parse_number() %>% order
 
@@ -80,8 +80,20 @@ dataSets = DataSets(  metadata.filename )
 dataElements = DataElements( metadata.filename )
 
 # OUS structure ####
-ous = read_excel( metadata.filename  , sheet = 'OrgUnits')
-ous.levels = read_excel(  metadata.filename , sheet = 'OrgUnitLevels')
+ous = orgUnits
+ous.levels = orgUnitLevels
+
+
+# NIGERIA Exception
+## Nigeria appears to have 6 levels, the last not named
+count( orgUnits , level )
+count( orgUnits , levelName )
+if ( country == 'Nigeria' ){
+  ous.levels = ous.levels %>% 
+  bind_rows( tibble(
+    level = 6, levelName = "sub_Facility" 
+  ))
+}
 
 ous.id_parent = ous %>% select( id, parent ) 
 # Remove top value if it has missing parent.
@@ -89,47 +101,77 @@ ous.id_parent = ous.id_parent %>% filter( !is.na( parent ) )
 
 
 # orgUnit.tree and path ----
-if( file.exists( paste0( country.dir , "ous.tree") ) ){
-  load( paste0( country.dir , "ous.tree") )
+ous.tree.file = files('ous.tree' , country = country , type = 'rds') %>% 
+  most_recent_file()
+
+ous.tree.file = paste0( country.dir, ous.tree.file )
+
+if( !ous_update & file.exists( ous.tree.file ) ){
+  print( paste( 'reading' , ous.tree.file ))
+  ous.tree = readRDS( ous.tree.file  ) %>% as.Node()
 } else {
+    print( 'preparing ous.tree')
     ous.tree = FromDataFrameNetwork( ous.id_parent )
-    save( ous.tree , file = paste0( country.dir , "ous.tree") )
+    ous.tree.list = as.list( ous.tree )
+    ous.tree.file = paste0( country.dir, 'ous.tree_' , Sys.Date() , ".rds" )
+    saveRDS( ous.tree.list , 
+             file = ous.tree.file    ,
+             compress = FALSE )
+    print( paste( 'ous.tree saved to' , ous.tree.file ) ) ; toc()
 }
 
-pathsFileName = paste0( country.dir , "paths") 
-if ( file.exists( pathsFileName ) ){
-  paths = readRDS( paste0( country.dir , "paths") )
+pathsFileName = files('paths' , country = country , type = 'rds') %>% 
+  most_recent_file()
+pathsFileName = paste0( country.dir, pathsFileName )
+
+
+if ( file.exists( pathsFileName )  & !ous_update ){
+  print( paste( 'reading', pathsFileName ) )
+  paths = readRDS( pathsFileName  )
 } else {
-  
+  print( 'preparing paths...' )
+
+  print( 'deteriming nodes' ); tic()
   dti = as.igraph.Node( ous.tree )
-  
-  node.ids = ous %>% 
-  filter( !is.na( parent) , 
-          !is.na( levelName )) %>% 
-  pull(id)
+  nodes = V(dti)
+  node.attributes = nodes %>% attributes() 
+  ids = node.attributes$names
+  toc()
   
   # sllllooowww
-  n = length(node.ids)
-  pb <- progress_estimated( n ) # dplyr - end of lifcycle
-  # pb <- progress_bar$new( total = length(node.ids) ) $ progress pacckage - not working!?
-  paths = map( 1:n , ~{
-    pb$tick()$print()
-    p = all_simple_paths(dti, node.ids[.x]  , 1)[[1]]
-    as_ids( p ) %>% rev %>% t %>%
+  n = length( nodes )
+  print( paste( 'there are', n , 'nodes.  Now preparint path for each'))
+  tic()
+
+  pb <- progress_bar$new( total = n  ,
+                          format = "(:current) [:bar] :percent :eta :elapsedfull" ) 
+  paths = map( 1:n , ~{ # skip one becuase it is the root 
+    pb$tick()
+    
+    p = all_simple_paths( dti, nodes[.x]  , 1 )
+    
+    # for national level, simple path is empty
+    if ( is_empty( p ) )  p = list( c( nodes[.x]  ) )
+    
+    as_ids( p[[1]] ) %>% rev %>% t %>%
       as_tibble() %>%
-      set_colnames( ous.levels$levelName[ 1:length(p) ] ) %>%
-      mutate( id = node.ids[.x] ) %>%
+      set_colnames( ous.levels$levelName[ 1:length(p[[1]]) ] ) %>%
+      mutate( id = ids[.x] ) %>%
       select( id, everything() )
   }
-  )
+  ) 
   paths = bind_rows( paths )
-  saveRDS( paths,  paste0( country.dir , "paths"))
+  pathsFileName = paste0( country.dir , country, 
+                          '_paths_' , Sys.Date() , '.rds' ) 
+  saveRDS( paths, pathsFileName )
+  print( 'prepared paths and save to' , pathsFileName  ); toc()
 }
 
 paths.translated = paths %>% 
   pivot_longer( cols = -id , names_to = 'Level') %>%
   left_join( ous %>% select( id, name ) , by = c( 'value' = 'id') ) %>%
   pivot_wider( -value , names_from = Level, values_from = name )
+
 
 
 #  NB: ous.leaves unused -- commented out March 15 2021
@@ -197,13 +239,12 @@ GET( loginurl, authenticate( username, password ) )
 
 # Request data ----
 
-YrsPrevious  = 5 
-periods = date_code( YrsPrevious = YrsPrevious ) # 'months_last_5_years' # 
 
 # QR periods 
 # periods = "202010;202011;202012;202101;202102;202103"
 
 level = 'All levels'
+YrsPrevious  = 5 
 
 for ( i in which( most_recent_data_files$update ) ){
   
@@ -226,12 +267,27 @@ for ( i in which( most_recent_data_files$update ) ){
   
   print( 'Elements' ) ; print( elements )
   
+  # Periods
+  periodType = formula.elements %>%
+    filter( Formula.Name %in% most_recent_data_files$formula[i] ) %>%
+    pull( periodType ) %>% max
+  
+  if ( periodType == 'Monthly') periods = date_code( YrsPrevious = YrsPrevious ) # 'months_last_5_years' # 
+
+  if ( periodType == 'Weekly') periods = date_code_weekly( YrsPrevious = YrsPrevious )
+
+  
+  print( 'period' ); print( periods )
+  
   tic()
   Sys.time()
   
   if ( ! loginDHIS2(baseurl, username, password ) ) stop()
   
-  x  = api_data( periods, level , elements, baseurl , 
+  x  = api_data( periods = periods , 
+                 level = level , 
+                 elements = elements, 
+                 baseurl = baseurl , 
                  formula = most_recent_data_files$formula[i] ,
                  update = most_recent_data_files$update[i] & !is.na(most_recent_data_files$file[i]) ,
                  check_previous_years = YrsPrevious  , 
@@ -249,8 +305,6 @@ for ( i in which( most_recent_data_files$update ) ){
   toc()
 
 }
-
-
 
 # Update list of downloaded files ----
 
@@ -284,21 +338,19 @@ most_recent_data_files = tibble(
 
 # View( most_recent_data_files )
 
-# Convert rda to excel ####
+# Translate, combine ous, and save  ####
 
-reconvert = FALSE   
+reconvert = FALSE    
+xlsx = FALSE
+summary =  FALSE
 
 for ( i in which( !most_recent_data_files$update ) ){
-  
+
   print( i )  ; print( most_recent_data_files$formula[i] ) 
 
   rdsFile = most_recent_data_files$file[i]
   
-  excelFileName = str_replace( rdsFile , ".rds" , "") %>% paste0( ".xlsx" )
-  
-  if (!file.exists( paste0( country.dir , rdsFile) ) ) next
-  
-  if ( file.exists( paste0( country.dir , excelFileName) ) & !reconvert  ) next
+  if ( !file.exists( paste0( country.dir , rdsFile) ) & !reconvert ) next
   
   rdsFileSplit = str_split( rdsFile, "_")[[1]]
   download_date = str_split( rdsFileSplit[length(rdsFileSplit)] , "\\.")[[1]][1]
@@ -310,7 +362,7 @@ for ( i in which( !most_recent_data_files$update ) ){
     filter( !is.na( COUNT ) )
   
   # tanslate data 
-  if ( 'closedDate' %in% names( orgUnits )) {
+  if ( 'closedDate' %in% names( orgUnits ) ) {
     orgUnitCols = c( 'id', 'name', 'leaf', 'closedDate') 
   } else {
     orgUnitCols = c( 'id', 'name', 'leaf' )
@@ -325,43 +377,63 @@ for ( i in which( !most_recent_data_files$update ) ){
                      # formulaElements = formula.elements  , 
                      formulaElements = dataElements ,
                      ous = orgUnits ) %>% 
-    inner_join( orgUnits %>% select( {{ orgUnitCols }} ), 
+    left_join( orgUnits %>% select( {{ orgUnitCols }} ), 
                 by = c('orgUnit' = 'id') ) %>%
     select( level, levelName, leaf, orgUnit , orgUnitName, period , 
             dataElement.id , dataElement,  
             categoryOptionCombo.ids , Categories ,
             SUM , COUNT ) %>%
-    arrange( level , levelName, orgUnitName, orgUnit, desc( period ) , dataElement , Categories    )
+    data.table::as.data.table()
+  
+  dataset = dataset[ order( level , levelName, orgUnitName, orgUnit, 
+                           -period , dataElement , Categories ) ]
 
+  ### problem with network when there are orphan facilities --
+  ### the listed parent is not found among orgUnits.  Trying simpler
+  ### method based on whether COUNT ==1.  There are some facilties that are both,
+  ### so filter to those that are only ever COUNT == 1
+  # dataset.parent.child = dataset %>% select( orgUnit ) %>%
+  #     distinct( orgUnit) %>%
+  #     left_join( ous %>% select( id, parent ) , by = c( 'orgUnit' = 'id') ) %>%
+  #     filter( !is.na( parent ))
+  # 
+  # data.tree <- FromDataFrameNetwork( dataset.parent.child )
+  # 
+  # data.leaves = data.tree$Get("isLeaf")
+  # data.leaves = tibble( id = attributes(data.leaves)$name , 
+  #                       effectiveLeaf = data.leaves )
   
-  dataset.parent.child = dataset %>% select( orgUnit ) %>%
-      distinct( orgUnit) %>%
-      inner_join( ous %>% select( id, parent ) , by = c( 'orgUnit' = 'id') ) %>%
-      filter( !is.na( parent ))
+  data.leaves = dataset %>%
+    as_tibble() %>%
+    group_by( orgUnit ) %>%
+    summarise( n = max( COUNT ) ) %>%
+    mutate( effectiveLeaf = ifelse( n == 1, TRUE, FALSE ) ) %>%
+    select( orgUnit , effectiveLeaf ) %>%
+    rename( id = orgUnit )
   
-  data.tree <- FromDataFrameNetwork( dataset.parent.child )
-  
-  data.leaves = data.tree$Get("isLeaf")
-  data.leaves = tibble( id = attributes(data.leaves)$name , 
-                        effectiveLeaf = data.leaves )
-  
+  # add paths 
   dataset = dataset %>%
-      left_join( data.leaves , 
+      left_join( data.leaves ,
                  by = c( 'orgUnit' = 'id') ) %>%
       left_join( paths.translated , 
                  by = c( 'orgUnit' = 'id') ) 
   
+  formulaData.filename = str_replace( most_recent_data_files$file[i] ,
+                                ".rds" , "_formulaData.rds")
+  saveRDS( dataset , paste0( country.dir , formulaData.filename ) )
+
+if ( summary | xlsx ){
   ### NB: can make column for each 'box' by id or by label
   ### need to adjust to match the formula expressions
   d.box = dataset %>%
-    select( -dataElement , - Categories ) %>%
-    unite( "box" , dataElement.id , categoryOptionCombo.ids,
+    # select( -dataElement , - Categories ) %>%
+    # unite( "box" , dataElement.id , categoryOptionCombo.ids,
+    #        sep = ".", remove = TRUE, na.rm = FALSE
+    # ) %>%
+    select( -dataElement.id , - categoryOptionCombo.ids ) %>%
+    unite( "box" , dataElement , Categories ,
            sep = ".", remove = TRUE, na.rm = FALSE
     ) %>%
-    # select( -dataElement.id , - categoryOptionCombo.ids ) %>% 
-    # unite( "box" , dataElement , Categories ,
-    #        sep = ".", remove = TRUE, na.rm = FALSE
-    # ) %>% 
     complete( box, period , 
               nesting( leaf, effectiveLeaf , level, levelName, orgUnitName, orgUnit ) , 
               fill = list( SUM = 0 ,
@@ -370,7 +442,7 @@ for ( i in which( !most_recent_data_files$update ) ){
 
   formula_expression = formulas %>% 
     filter( Formula.Name %in% most_recent_data_files$formula[i] ) %>%
-    pull( Formula.id )
+    pull( Formula )
   
   # TODO:
   # Sometimes the download has no values for one of the requested formula elements.
@@ -378,10 +450,16 @@ for ( i in which( !most_recent_data_files$update ) ){
   # Revise formula expression to include available columns only
   
   box_vars = d.box$box %>% unique
-    
+  
+  backtick <- function(x) paste0("`", x, "`")
+  
   # get formula, and limit to available vars in box
   formula_box = str_replace_all( formula_expression , fixed("+") , "," ) %>%
-    str_split( " , ") %>% unlist %>% intersect( box_vars ) %>% 
+    str_replace_all( . , fixed("[") , "" ) %>%
+    str_replace_all( . , fixed("]") , "" ) %>%
+    str_split( " , ") %>% unlist %>% 
+    backtick() %>%
+    intersect( backtick( box_vars ) ) %>% 
     paste(. , collapse = " , " )
   
   sum.fe = paste("sum(c(" , formula_box , "), na.rm = TRUE)" ) 
@@ -390,57 +468,79 @@ for ( i in which( !most_recent_data_files$update ) ){
   
 
   # Pivot wider and sum 
+  tic()
   dataset_sum = d.box  %>%
     ungroup %>%
     select( - COUNT ) %>% 
     distinct %>% # remove duplicated rows, if exist due to download issues
     pivot_wider(
       names_from = box,
-      values_from = SUM ) %>% 
-    group_by( levelName, orgUnitName, orgUnit, 
-              # parentName,  parent, 
-              period, level, leaf ,
-              effectiveLeaf )  %>% 
-    summarise( 
+      values_from = SUM ) %>%
+    group_by( level, levelName, orgUnitName, orgUnit,
+             # parentName,  parent,
+             period, leaf ,
+             effectiveLeaf ) %>%
+    summarise(
       Total = eval( parse( text  = sum.fe ) )
-      ) 
+      )
+  toc()
 
   # Pivot wider and count 
+  tic()
   dataset_count = d.box %>%
     select( - SUM ) %>%
     distinct %>% # remove duplicated rows, if exist due to download issues
     pivot_wider(
       names_from = box,
       values_from = COUNT ) %>%
-    group_by( levelName, orgUnitName, orgUnit, 
+    group_by( level, levelName, orgUnitName, orgUnit, 
               # parentName,  parent, 
-              period, level, leaf ,
+              period, leaf ,
               effectiveLeaf )  %>% 
     summarise( Count.Complete = eval( parse( text  = min.fe ) ) ,
                Count.Any = eval( parse( text  = max.fe ) )
                # , any.Count = eval( parse( text  = any.fe ) )
     )
+  toc()
   
   dataset_summary = full_join( dataset_sum , 
                        dataset_count ,
-                       by = c("levelName", "orgUnit" , "orgUnitName", "period", 
-                              "level" , "leaf", "effectiveLeaf" )
+                       by = c("level", "levelName", 
+                              "orgUnit" , "orgUnitName", 
+                              "leaf", "effectiveLeaf" ,
+                              "period"
+                                )
   ) %>%
       # left_join( dataset %>% distinct( orgUnit, effectiveLeaf ), by = 'orgUnit' ) %>%
       left_join( paths.translated , 
-                 by = c( 'orgUnit' = 'id') ) %>%
-      arrange( level, leaf, orgUnitName, period )
+                 by = c( 'orgUnit' = 'id') ) 
+  
+  # dataset_count =  dataset_count[ order( level, leaf, orgUnitName, period ) ]
   
 
 # Write file 
-metadata = tibble( `Formula Name` = formula.names[i] , 
-                   `Period` = periods , 
-                   `Organization Unit Levels` = level ,
-                   Requested = download_date )
-formula =  formulas %>% filter( Formula.Name %in% formula.names[i] )
-formulaElements = formula.elements %>% filter( Formula.Name %in% most_recent_data_files$formula[i] )
-formulaData = dataset
-formulaSummaryDataset = dataset_summary
+
+
+  summaryData.filename = str_replace( most_recent_data_files$file[i] ,
+                                  ".rds" , "_summaryData.rds")
+  saveRDS( dataset_summary , paste0( country.dir , summaryData.filename ) )
+  # end summary
+  }
+
+
+if ( xlsx ){
+    excelFileName = str_replace( rdsFile , ".rds" , "") %>% paste0( ".xlsx" )
+
+    if ( file.exists( paste0( country.dir , excelFileName) ) & !reconvert  ) next
+
+    metadata = tibble( `Formula Name` = formula.names[i] , 
+                       `Period` = periods , 
+                       `Organization Unit Levels` = level ,
+                       Requested = download_date )
+    formula =  formulas %>% filter( Formula.Name %in% formula.names[i] )
+    formulaElements = formula.elements %>% filter( Formula.Name %in% most_recent_data_files$formula[i] )
+    formulaData = dataset
+    formulaSummaryDataset = dataset_summary
 
       wb <- createWorkbook()
       
@@ -459,7 +559,9 @@ formulaSummaryDataset = dataset_summary
       writeDataTable( wb, sheet5, formulaSummaryDataset , rowNames = FALSE)
       
       saveWorkbook( wb , paste0( country.dir, excelFileName ) , overwrite = TRUE )   
-      
+}
+
+# end 
 }
 
 

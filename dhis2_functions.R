@@ -945,31 +945,91 @@ ous_from_metatdata = function( .meta = NULL,
  # Function to create string of dates. 
  # Default is for every month during last five years 
  
+ # date_code = function( 
+ #     years = NULL , 
+ #     months = NULL  ){
+ #     
+ #     if ( is.null( months ) )  months = 1:12
+ #     
+ #     if ( is.null( years ) ){
+ #         
+ #         this.year = year( Sys.Date() )
+ #         FiveYrsPrevious = this.year - 4
+ #         
+ #         years = FiveYrsPrevious:this.year
+ #     }
+ #     
+ #     # get current month.  List months from Jan/FiveYearsPrevious 
+ #     # through month before current month
+ #     library( zoo )
+ #     startMonth = as.yearmon(FiveYrsPrevious )
+ #     endMonth = Sys.yearmon()
+ #     months = seq( startMonth, endMonth , 1/12 ) %>% format(., "%Y%m")
+ #     
+ #    # remove current month ;
+ #     months = months[ 1:( length(months) - 1)]
+ #     
+ #     period = paste( months, collapse = ";" )
+ #     return( period )
+ # }
+ 
  date_code = function( 
+  years = NULL , 
+  months = NULL ,
+  startPeriod = NULL , 
+  YrsPrevious = 5 ,
+  currentMonth = TRUE  # include current month
+  ){
+  
+  if ( is.null( months ) )  months = 1:12
+  
+  if ( is.null( years ) ){
+    
+    this.year = year( Sys.Date() )
+    YrsPrevious = this.year - YrsPrevious
+    
+    years = YrsPrevious:this.year
+  }
+  
+  # get current month.  List months from Jan/FiveYearsPrevious 
+  # through month before current month
+  library( zoo )
+  if ( is.null( startPeriod ) ){
+    startMonth = as.yearmon( YrsPrevious )
+  } else {
+    startMonth = as.yearmon( startPeriod , "%Y%m")
+  }
+  
+  endMonth = Sys.yearmon()
+  months = seq( startMonth, endMonth , 1/12 ) %>% format(., "%Y%m")
+  
+  # remove current month ;
+  if (currentMonth == FALSE )
+  months = months[ 1:( length(months) - 1)]
+  
+  period = paste( months, collapse = ";" )
+  return( period )
+}
+
+ date_code_weekly = function( 
+     YrsPrevious = 5 , 
      years = NULL , 
-     months = NULL ){
+     weeks = NULL  ){
      
-     if ( is.null( months ) )  months = 1:12
+     if ( is.null( weeks ) )  weeks = paste0( "W", 1:53 )
      
-     if ( is.null( years ) ){
-         
-         this.year = year( Sys.Date() )
-         FiveYrsPrevious = this.year - 4
-         
-         years = FiveYrsPrevious:this.year
-     }
+   if ( is.null( years ) ){
+      
+      this.year = year( Sys.Date() )
+      YrsPrevious = this.year - YrsPrevious
+      
+      years = YrsPrevious:this.year
+   }
      
-     # get current month.  List months from Jan/FiveYearsPrevious 
-     # through month before current month
-     library( zoo )
-     startMonth = as.yearmon(FiveYrsPrevious )
-     endMonth = Sys.yearmon()
-     months = seq( startMonth, endMonth , 1/12 ) %>% format(., "%Y%m")
-     
-    # remove current month ;
-     months = months[ 1:( length(months) - 1)]
-     
-     period = paste( months, collapse = ";" )
+     period = expand.grid( years, weeks ) %>% 
+       mutate( w = paste0( Var1, Var2 ) ) %>%
+       pull( w ) %>% paste0(., collapse = ";"  )
+    
      return( period )
  }
  
