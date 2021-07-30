@@ -1,8 +1,27 @@
-# Testing dataset reporting downloads
+# Script to download data defined by formulas saved in the Magic Glasses (data dictionary) app
 
+# setup =====
 
-country = "DRC"
-ous_update = FALSE  
+country = NULL
+
+# location of folder with country data, metadata, etc.  
+## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  
+country.dir = NULL 
+
+# DHIS2 details
+baseurl = "https://www.snisrdc.com/" # note that need trailing "/"
+username = NULL
+password = NULL
+
+# Parameters for data requests
+level = 'All levels' # all org units
+YrsPrevious  = 5 # number of years of data to request 
+
+# First time this file is run, a rather length process maps the facility hierarchy
+# if need to update, change to TRUE 
+ous_update = FALSE   
+
+# for quarterly reports (ignore) 
 QR = FALSE 
 
 # libraries and functions ####
@@ -37,7 +56,13 @@ stderr <- function(x, na.rm=TRUE ) {
 
 # Formulas  ####
 
-country.dir = dir( country )
+if ( is.null( country.dir) ) country.dir = dir( country )
+
+# make sure directory has terminal slash
+has.slash.at.end = str_locate_all( country.dir , "/") %>% 
+  unlist %in% nchar( country.dir) %>% any 
+if ( !has.slash.at.end  ){ country.dir = paste0( country.dir , "/" ) }
+
 
 formula.file = files('Formula' , country = country ) %>% most_recent_file()
 
@@ -226,25 +251,28 @@ most_recent_data_files = tibble(
 
 
 ## login and credentials ----
-credentials = read_excel( paste0( "../dataDictionary/dhis2_dictionary/Formulas/",
-                                 "_Instances_jp.xlsx")) %>%
-  filter( Instance == country )
 
-baseurl = credentials$IPaddress
-username = credentials$UserName
-password = credentials$Password
+if ( any( is.null( c(baseurl, username, password ) ))){
+  credentials = read_excel( paste0( "../dataDictionary/dhis2_dictionary/Formulas/",
+                                    "_Instances_jp.xlsx")) %>%
+    filter( Instance == country )
+  
+  baseurl = credentials$IPaddress
+  username = credentials$UserName
+  password = credentials$Password
+
+}
 
 loginurl <-paste0( baseurl , "api/me" )
 GET( loginurl, authenticate( username, password ) )
+
+
 
 # Request data ----
 
 
 # QR periods 
 # periods = "202010;202011;202012;202101;202102;202103"
-
-level = 'All levels'
-YrsPrevious  = 5 
 
 for ( i in which( most_recent_data_files$update ) ){
   
