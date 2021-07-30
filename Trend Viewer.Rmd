@@ -1937,11 +1937,11 @@ checkboxInput( "plotly" , label ='Plotly Chart',
 checkboxInput( "smooth" , label ='Show smoothed trend line (loess)',
                value = FALSE  ) 
 
-checkboxInput( "pre_evaluation" , label ='Show predicted values during during year prior to intervention (to gauge accuracy of time-series model)',
+checkboxInput( "pre_evaluation" , label ='Predicted values during year prior to intervention (to gauge accuracy of time-series model)',
                value = FALSE  ) 
 
 
-checkboxInput( "evaluation" , label ='Show predicted values during evaluation period (assuming no intervetion)',
+checkboxInput( "evaluation" , label ='Predicted values during evaluation period (assuming no intervetion)',
                value = FALSE  ) 
 
 checkboxInput( "scale" , label ='Scale values (x/mean - 1)',
