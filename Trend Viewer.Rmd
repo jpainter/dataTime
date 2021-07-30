@@ -1376,6 +1376,17 @@ aggregatePlotData = reactive({
  
 })
 
+ caption.text =  reactive({
+    paste( 
+      ifelse( selectedOUs() > 0 , 
+           paste( comma( length( selectedOUs() ) ), 'facilities' ) ,
+           "" ) ,
+    ifelse( nchar( input$Admn2 ) > 0, paste( input$Admn2 , collapse = "+" ) ) ,
+    ifelse( nchar( input$Admn3 ) > 0, paste(  "/" , input$Admn3 , collapse = "+" ) ) ,
+    ifelse( nchar( input$Admn4 ) > 0, paste(  "/" , input$Admn4, collapse = "+"   ) )
+                         )
+  })
+
 plotAgregateValue = reactive({
   
   req( aggregatePlotData() )
@@ -1391,8 +1402,6 @@ plotAgregateValue = reactive({
   
   .limits = c(0, NA)
   
-  caption.text =  paste( comma( length( selectedOUs() ) )  ,
-                               'facilities selected' )
      
   print('plotting aggregate data');
   
@@ -1445,7 +1454,7 @@ plotAgregateValue = reactive({
     labs( y = "" , x="" ,
           title = str_wrap( input$indicator , 200 ) ,
           subtitle = str_wrap( data.text , 200 ) 
-          # , caption =  str_wrap( caption.text , 50 )
+          , caption =  str_wrap( caption.text() , 200 )
           ) +
     theme_minimal()  
     
@@ -2427,7 +2436,11 @@ key.mape = reactive({
                        mean( pred , na.rm = T ) ,
                        NA ) ,
           !! rlang::sym( period() )  := nth( !! rlang::sym( period() )  , mid_point ) ,
-          actual = nth( actual , mid_point ) 
+          actual = ifelse( mape>=0 , max( actual, na.rm = TRUE ),
+                           min( actual, na.rm = TRUE  ) 
+                           #nth( actual , mid_point ) 
+          ) ,
+          just = ifelse( mape >= 0 , 2, -2 )
           ) %>%
   as_tibble() %>%
       mutate( !! input$agg_level := 
@@ -2493,7 +2506,11 @@ key.mpe = reactive({
                        mean( pred , na.rm = T ) ,
                        NA ) ,
           !! period()   := nth( !! rlang::sym( period() )  , mid_point ) , 
-          actual = nth( actual , mid_point )
+           actual = ifelse( mpe>=0 , max( actual, na.rm = TRUE ),
+                           min( actual, na.rm = TRUE  ) 
+                           #nth( actual , mid_point ) 
+          ) ,
+          just = ifelse( mpe >= 0 , 1, -1 )
           ) %>%
   as_tibble()  %>%
       mutate( !! input$agg_level := 
@@ -2572,7 +2589,7 @@ plotTrends = reactive({
     labs( y = "" , x="" ,
           title = str_wrap( input$indicator , 200 ) ,
           subtitle = str_wrap( data.text , 200 ) 
-          # , caption =  str_wrap( caption.text , 50 )
+          , caption =  str_wrap( caption.text() , 200 )
           ) 
   print( 'axis scales and labs done' )
   
@@ -2595,16 +2612,19 @@ plotTrends = reactive({
     #            color = 'blue' , alpha = .5 ) 
     geom_vline( xintercept = as.Date( eval_date ) ,
                 color = 'black', alpha = 1 ) +
-    annotate( "text" ,
-              x = as.Date( eval_date ) ,
-              y = Inf ,
-              hjust = 0 , vjust = 1 ,
-              label = paste( "MPE:\n" )
-              ) +
-    geom_label_repel( data =  key.mpe()
-               , aes( x = !! rlang::sym( period() )  ,  
-               label = percent( mpe, accuracy = 1.0 ) )
-               , y = Inf
+    # annotate( "text" ,
+    #           x = as.Date( eval_date ) ,
+    #           y = Inf ,
+    #           hjust = 0 , vjust = 1 ,
+    #           label = paste( "MPE:\n" )
+    #           ) +
+    geom_label_repel( data =  key.mpe() ,
+               aes(  x = !! rlang::sym( period() ) , y = actual , 
+               label = paste( "MPE:" , percent( mpe, accuracy = 1.0 ) ) ,
+               hjust = just 
+               ) ,
+               # force_pull = 0 , 
+               segment.colour = NA
                )
   }
   
@@ -2628,16 +2648,18 @@ plotTrends = reactive({
     geom_vline( xintercept = as.Date( pre_eval_date ) ,
                 color = 'brown' ,
                 alpha = .25 ) +
-    annotate( "text" ,
-              x =  as.Date( pre_eval_date ) ,
-              y = Inf ,
-              hjust = 0 , vjust = 1 ,
-              label = paste( "MAPE:"  )
-              ) +
-    geom_label_repel( data =  key.mape()
-               , aes( x = !! rlang::sym( period() )  ,  
-               label = percent( mape, accuracy = 1.0 ) )
-               , y = Inf
+    # annotate( "text" ,
+    #           x =  as.Date( pre_eval_date ) ,
+    #           y = Inf ,
+    #           hjust = 0 , vjust = 1 ,
+    #           label = paste( "MAPE:"  )
+    #           ) +
+    geom_label_repel( data =  key.mape() ,
+               aes(  x = !! rlang::sym( period() ) , y = actual , 
+               label = paste( "MAPE:" , percent( mape, accuracy = 1.0 ) ) ,
+               hjust = just ) ,
+               # force_pull = 0 , 
+               segment.colour = NA 
                )
 
   }
