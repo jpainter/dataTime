@@ -7,7 +7,6 @@
 *.log
 *.tex
 *.rds
-*.pptx
 *.xlsx
 *.gif
 *.Rda
