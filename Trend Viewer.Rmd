@@ -1,5 +1,5 @@
 ---
-title: "Reporting Bias Viewer"
+title: "Trend Viewer"
 author: "jp"
 date: "1/4/2021"
 output: 
@@ -17,7 +17,7 @@ source( "data_time_libraries.r")
 library(pacman)
 
 pacman::p_load( officer , rvg ,
-                tidyverse, scales, 
+                tidyverse, scales, plotly ,
                 data.table , tidyfast, tidytable ,
         lubridate , anytime, progressr , assertthat  , stringr, 
         readxl, patchwork, cowplot, kableExtra  ,
@@ -184,15 +184,6 @@ selectInput("Admn4", label = "Admn4" ,
               selected = 1 ,
               multiple = TRUE , selectize = TRUE ) ,
   
-  selectInput("source", label = "Original/Cleaned" , 
-              choices = c( 'Original', 'Cleaned' ) , 
-              selected = 'Original' ) ,
-  
-  selectInput("split", label = "Split Data By:" , 
-              choices = "None" , 
-              selected = "None" ) , 
-  
-  
   checkboxInput( "total", label ='Total all categories', value = FALSE ) ,
   
   # checkboxInput( "merge", label ='Merge datasets', value = FALSE ) ,
@@ -201,6 +192,14 @@ selectInput("Admn4", label = "Admn4" ,
                multiple = TRUE , selectize = TRUE ) ,
   
   checkboxInput( "dataset", label ='Total unmerged datasets', value = TRUE ) ,
+  
+  selectInput("source", label = "Original/Cleaned" , 
+              choices = c( 'Original', 'Cleaned' ) , 
+              selected = 'Original' ) ,
+  
+  selectInput("split", label = "Split Data By:" , 
+              choices = "None" , 
+              selected = "None" ) , 
   
   checkboxInput( "count.any", label ='Count any categories', value = FALSE ) ,
   
@@ -412,7 +411,7 @@ xlxs_data_file = reactive({
 # updateSelectInput( "indicator", choices = )
 
 dataset = reactive({
-  print( 'dataset:')
+  print( 'dataset():')
   req( rds_data_file() )
   
   print("ingesting..."); 
@@ -455,7 +454,7 @@ dataSets = reactive({
 })
 
 observe({
-  print( 'updating datsets' )
+  print( 'updating datasets' )
   req( dataSets() )
   if ( any( nchar( dataSets() > 0 ) ) ){ 
     updateSelectInput( session, 'merge' , 
@@ -484,7 +483,7 @@ most_recent_period = reactive({
 })
 
 period = reactive({
-  print('period()')
+  print('period():')
   req(dataset())
 
   weekly = any( map_lgl( dataset() , 
@@ -952,7 +951,7 @@ plot2 = reactive({
     geom_point( ) +
     geom_line( ) +
     geom_hline( yintercept = facilities() ) +
-    facet_wrap( ~ year ) +
+    facet_wrap( ~ year , scales = 'free_x') +
     # scale_x_discrete( .period 
     #                     , breaks = .breaks
     #                     # , labels  = as.character( .breaks )
@@ -1085,7 +1084,7 @@ plot1 = reactive({
                       , labels  =  .breaks
                       )  +
     geom_hline( yintercept = facilities() ) +
-    facet_wrap( ~year )
+    facet_wrap( ~ year , scales = 'free_x')
   
   if (!is.null( selectedOUs() ) ){
     g = g + geom_col( data = x.annual() , fill = 'brown' ) 
@@ -1877,16 +1876,22 @@ Row
 
 ```{r}
 
-selectInput("filter_data", label = "Filter data:" , 
-              choices = NULL , 
-              selected = NULL  ) 
+# selectInput("filter_data", label = "Filter data:" , 
+#               choices = NULL , 
+#               selected = NULL  ) 
 
 dates = reactive({ 
-    req( data.total() )
-    print('dates()')
+    req( dataset() )
+    print('dates():'); 
     .period = period()
+    dates = dataset() %>% pull( !! rlang::sym( .period )) %>% 
+      unique 
     
-    unique( data.total() %>% pull( !! rlang::sym( .period )) )  
+    # print( dates )
+    print( max( dates ))
+    print( 'end dates()')
+    return( dates )
+    
     })
 
 
@@ -1906,15 +1911,18 @@ checkboxInput( "selected" , label ='Show selected facilities',
 checkboxInput( "legend" , label ='Show legend',
                value = FALSE  ) 
 
+checkboxInput( "plotly" , label ='Plotly Chart',
+               value = FALSE  ) 
+
 ```
 
 ### Forecast Type
 
 ```{r}
 
-selectInput("filter_display", label = "Filter display:" , 
-              choices = NULL , 
-              selected = NULL  ) 
+# selectInput("filter_display", label = "Filter display:" , 
+#               choices = NULL , 
+#               selected = NULL  ) 
 
 
 checkboxInput( "smooth" , label ='Show smoothed trend line (loess)',
@@ -2040,13 +2048,34 @@ Row
 
 ```{r forecast_plot}
 
-# observe({  updateSelectInput( session, 'evaluation_month' , 
-#                               choices =  dates()  , 
-#                               selected = ifelse( period() %in% 'Month' ,
-#                                                  max(  dates()  ) - month(12) ,
-#                                      max(  dates()  ) - week(52)            )
-#                               ) 
-#   } )
+# conditionalPanel( "input.plotly == true" ,
+                  # plotlyOutput( "plotly_trends" ) 
+# )
+
+# conditionalPanel( "input.plotly == false" , 
+                 plotOutput( "plot_trends" ,
+                             hover = "plot_hover"  )
+                 # ) 
+selectInput( "var_y", "Y-Axis", choices = NULL )
+uiOutput( "dynamic" )
+
+observe({  
+  updateSelectInput( session, 'var_y' ,
+          choices =  names( trendData() ) 
+          )
+  } )
+
+observeEvent(  dates() , {  
+  updateSelectInput( session, 'evaluation_month' ,
+          choices =  dates()  , 
+          selected = dates()[ round(length(dates())/2) ]
+            # ifelse( period() %in% 'Month' , 
+            #                  dates()[12], 
+            #                  dates()[52] )
+                             # length(  dates()  ) - 12  ,
+                             # length(  dates()  ) - 12            )
+                             )
+  } )
             
 
 observeEvent(
@@ -2083,7 +2112,6 @@ sub_agg_level = reactive({
      filter( parent == input$agg_level ) %>%
      pull( levelName )
 })
-   
   
 trendData = reactive({
   req( data.hts() )
@@ -2188,8 +2216,6 @@ trendData = reactive({
   return( .d )
 })
 
-plotOutput( 'plot_trends' )
-
 evaluationParameters <- reactiveValues( Month  = NULL )
 
 tsModel = reactive({
@@ -2199,8 +2225,14 @@ tsModel = reactive({
   if ( !input$evaluation ) return( NULL )
   print( 'tsModel' )
   
+  # Filter data to period just before evaluation start
+  print( input$evaluation_month )
+  eval_month = input$evaluation_month
+  time_period = yearmonth( eval_month  ) # - month(1)
+  
   fit.data  = trendData() %>%
-    filter_index( ~ as.character( yearmonth( input$evaluation_month  ) - 1 ) )
+    filter_index( ~ as.character( time_period ) ,
+                  .preserve = TRUE )
   
   if (input$model %in% 'ARIMA' ){
     fit = fit.data %>% model( a = ARIMA( total ) ) 
@@ -2216,7 +2248,7 @@ tsModel = reactive({
   if (input$model %in% 'ETS' ){
     fit = fit.data %>% model( a = ETS( total )  ) 
     
-    print('ETS model') ; print( fit )
+    print('ETS model') ; #print( fit )
     
   if ( input$reconcile ) fit = fit %>% 
         reconcile( 
@@ -2253,8 +2285,11 @@ tsPreModel = reactive({
   
   if ( !input$pre_evaluation ) return( NULL )
 
+  eval_month = input$evaluation_month 
+  time_period = yearmonth( eval_month  ) - 12
+  
   fit.data  = trendData() %>%
-    filter_index( ~ as.character( yearmonth( input$evaluation_month  ) - 13 ) )
+    filter_index( ~ as.character( time_period ) )
   
 
    if (input$model %in% 'ARIMA' ){
@@ -2335,7 +2370,7 @@ tsPreForecast = reactive({
                 as.character( !! rlang::sym( input$agg_level  ) ) )
   
     
-  print( 'pre-fcast' ) ; print( fcast )
+  # print( 'pre-fcast' ) ; print( fcast )
   return( fcast )
   })
 
@@ -2378,7 +2413,7 @@ key.mape = reactive({
   truth = predicted %>% 
      inner_join( actual , by = c( period() , keyvars  ) )  
   
-  print( 'truth'); print( truth )
+  print( 'truth'); #print( truth )
   
   mid_point = round( as.integer( input$horizon ) /2  )
   
@@ -2398,7 +2433,7 @@ key.mape = reactive({
       mutate( !! input$agg_level := 
                 as.character( !! rlang::sym( input$agg_level  ) ) )
   
-  print( "mape"); #glimpse(e )
+  print( "end key.mape"); glimpse(e )
   return( e )
 })
 
@@ -2445,7 +2480,7 @@ key.mpe = reactive({
   truth = predicted %>% 
      inner_join( actual , by = c( period(), keyvars  ) )  
   
-  print( 'truth'); print( truth )
+  print( 'truth'); #print( truth )
   
   mid_point = round( as.integer( input$horizon ) /2  )
   
@@ -2489,9 +2524,9 @@ plotTrends = reactive({
   .d = trendData() 
   print( 'ploTrends .d:'); #glimpse(.d)
   
-  if ( !input$filter_display %in% 'All' ) .d = .d %>% 
-          filter( .data[[ input$split ]] %in%
-                    input$filter_display )
+  # if ( !input$filter_display %in% 'All' ) .d = .d %>% 
+  #         filter( .data[[ input$split ]] %in%
+  #                   input$filter_display )
 
    
   g = .d %>%
@@ -2501,12 +2536,18 @@ plotTrends = reactive({
     #          , color =  grouping_var
     #         ) )  +
     # geom_line() +
-    theme_minimal() 
+  theme_minimal() 
   
   print( 'basic plot done' )
   
   if ( !input$legend ) g = g + 
     theme(legend.position = "none")
+  
+  if ( !input$split %in% 'None' ){ 
+    g = g + geom_label_repel( 
+               aes( label = grouping_var , group = grouping_var )
+               )
+  }
   
   # Determine number of agg levels available
   # If only one, do not facet (causes error, perhaps because of autoplot?)
@@ -2538,9 +2579,7 @@ plotTrends = reactive({
   #### Evaluation Trend Line
   if ( input$evaluation ){
     print( 'evaluation line ' )
-    eval_date = as.Date( 
-      yearmonth( input$evaluation_month  ) 
-      )
+    eval_date =   yearmonth( input$evaluation_month  ) 
     
    g = g + 
     autolayer( tsForecast()
@@ -2548,22 +2587,24 @@ plotTrends = reactive({
                , color = 'black'
                , linetype = 'dashed', size = 1
                ,  alpha = .5 ) +
+     
     # geom_line( data = tsForecast() %>%
     #   as_tibble %>%
     #   mutate( !! input$agg_level := as.character( !! rlang::sym( input$agg_level  ) ) ) ,
     #            aes( x = Month, y = .mean ) ,
     #            color = 'blue' , alpha = .5 ) 
-    geom_vline( xintercept = eval_date ,
+    geom_vline( xintercept = as.Date( eval_date ) ,
                 color = 'black', alpha = 1 ) +
     annotate( "text" ,
-              x = eval_date ,
+              x = as.Date( eval_date ) ,
               y = Inf ,
               hjust = 0 , vjust = 1 ,
               label = paste( "MPE:\n" )
               ) +
     geom_label_repel( data =  key.mpe()
-               , aes( x = !! rlang::sym( period() )  ,  y = actual ,
-               label = percent( mpe , accuracy = 1.0 ) )
+               , aes( x = !! rlang::sym( period() )  ,  
+               label = percent( mpe, accuracy = 1.0 ) )
+               , y = Inf
                )
   }
   
@@ -2573,11 +2614,10 @@ plotTrends = reactive({
   if ( input$pre_evaluation ){
     
     print( 'pre evaluation line ' )
-    eval_date = as.Date(
-      yearmonth( input$evaluation_month  ) - 
-        month( as.integer( input$horizon ) )
-      )
-    print( 'eval_date is' ); print( eval_date )
+    pre_eval_date = yearmonth( input$evaluation_month  ) - 12
+        # month( as.integer( input$horizon ) )
+      
+    print( 'pre_eval_date is' ); print( pre_eval_date )
     g = g + 
     autolayer( tsPreForecast()
                , level = ci_levels()
@@ -2585,11 +2625,11 @@ plotTrends = reactive({
                , linetype = 'dotted'  , size = 1
                ,  alpha = .5 ) +
     # geom_line( data = tsPreForecast(), aes( y = .mean ) ,   color = 'light blue', alpha = 1 ) +
-    geom_vline( xintercept = eval_date,
+    geom_vline( xintercept = as.Date( pre_eval_date ) ,
                 color = 'brown' ,
                 alpha = .25 ) +
     annotate( "text" ,
-              x =  eval_date ,
+              x =  as.Date( pre_eval_date ) ,
               y = Inf ,
               hjust = 0 , vjust = 1 ,
               label = paste( "MAPE:"  )
@@ -2645,11 +2685,29 @@ plotTrends = reactive({
   # } 
   #   
   print( 'end plotTrends():' )
+  
   return( g )
 })
 
-# output$plotTrends <- renderPlotly({  plotTrends()  })
-output$plot_trends <- renderPlot({  plotTrends()  })
+
+# output$plotly_trends <- renderPlotly({
+#   plotly::ggplotly( plotTrends() )  })
+
+output$plot_trends <- renderPlot({ plotTrends()  })
+
+ output$dynamic <- renderUI({
+    req(input$plot_hover) 
+    verbatimTextOutput("vals")
+  })
+
+output$vals <- renderPrint({
+    hover <- input$plot_hover 
+    # print(str(hover)) # list
+    y <- nearPoints( trendData() , input$plot_hover)[input$var_y]
+    req(nrow(y) != 0)
+    y
+  })
+ 
 
 ```
 
