@@ -28,7 +28,7 @@ pacman::p_load( officer , rvg ,
         fpp3  , fabletools  , 
         furrr, tictoc, magrittr, hrbrthemes, data.tree, igraph  ,
         sf, mapview, GGally , plotly , sugrrants, lemon , plotly ,
-        shinyscreenshot, ggrepel
+        shinyscreenshot, ggrepel, shinybusy
         )
 
 options( dplyr.summarise.inform = FALSE )
@@ -161,6 +161,8 @@ Inputs {.sidebar data-width=300}
 ====================================
 
 ```{r input, echo=FALSE}
+add_busy_spinner(spin = "fading-circle", position = "bottom-right")
+
 inputPanel(
   
   
@@ -415,7 +417,8 @@ dataset = reactive({
   req( rds_data_file() )
   
   print("ingesting..."); 
-  showNotification( "reading data file", type = 'message' )
+  # showNotification( "reading data file", type = 'message' )
+
   
   if ( is.null( rds_data_file() ) ) return( NULL )
   
@@ -442,7 +445,7 @@ dataset = reactive({
   print("done"); toc()
   print( 'glimpse( dataset )' ); # glimpse( dataset )
   #   glimpse( formula_elements() )
-    
+
   return( dataset )
   
 })
@@ -1168,6 +1171,7 @@ data.total = reactive({
   req( group_by_cols() )
   req( period() )
   print( 'data.total()')
+
   
   .period = period()
   # if ( input$merge & input$total ){
@@ -1252,6 +1256,7 @@ data.total = reactive({
               )  # for plotting, replace missing with zero 
   
   print( 'data.total finalized' ); # print( toc())
+
   return( data.total )
     
 
@@ -1277,6 +1282,8 @@ num_datasets = reactive({
 
 hts = reactive({   
   print( "hts():" )
+
+  
   adms = backtick( levelNames() )
   
   if (input$hts){ 
@@ -1306,6 +1313,7 @@ hts = reactive({
   #   paste( input$split ,  ' * Facilities * (', hts , ')' )
   
   print( "end hts():" ); print( hts )
+
   return( hts )
 })
 
@@ -1509,7 +1517,7 @@ ous.file = reactive({
 ous = reactive({  print( 'reading ous file' ) ; 
   req( ous.file() )
   if ( !any(file.exists( ous.file() ) )) return( NULL )
-  showNotification("reading geo features file")
+  # showNotification("reading geo features file")
   tic()
   o = readRDS( ous.file() )  
   print( 'finished reading ous file' ) ; toc() 
