@@ -2,16 +2,22 @@
 
 # setup =====
 
-country = NULL
+## Replace the text values for country and data.directory.  If working on multiple country instances, 
+## suggest a different directory for each.
 
-# location of folder with country data, metadata, etc.  
+
+country = "Sierra Leone Demo" # e.g. "Malawi" must be in quotes
+
+## location of folder with country data, metadata, etc.  
 ## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  
-country.dir = NULL 
 
-# DHIS2 details
-baseurl = "https://www.snisrdc.com/" # note that need trailing "/"
-username = NULL
-password = NULL
+data.dir = "~/my_data_folder/malaria/Sierra_Leone_Demo"  
+
+## DHIS2 address and credentials 
+
+baseurl = "https://play.dhis2.org/2.36.3/" # note that need trailing "/"
+username = "admin"
+password = "district"
 
 # Parameters for data requests
 level = 'All levels' # all org units
@@ -56,26 +62,28 @@ stderr <- function(x, na.rm=TRUE ) {
 
 # Formulas  ####
 
-if ( is.null( country.dir) ) country.dir = dir( country )
+if ( is.null( data.dir) ) data.dir = dir( country )
 
 # make sure directory has terminal slash
-has.slash.at.end = str_locate_all( country.dir , "/") %>% 
-  unlist %in% nchar( country.dir) %>% any 
-if ( !has.slash.at.end  ){ country.dir = paste0( country.dir , "/" ) }
+has.slash.at.end = str_locate_all( data.dir , "/") %>% 
+  unlist %in% nchar( data.dir) %>% any 
+if ( !has.slash.at.end  ){ data.dir = paste0( data.dir , "/" ) }
 
 
-formula.file = files('Formula' , country = country ) %>% most_recent_file()
+formula.file = files( 'Formula' , dir = data.dir , country = country ) %>% most_recent_file()
 
-formulas =  read_excel( paste0( country.dir, formula.file ) , sheet = 'Formula') %>% 
-  filter( !is.na(Formula.Name) ) 
+formulas =  read_excel( paste0( data.dir, formula.file ) , sheet = 'Formula') %>% 
+  filter( !is.na( Formula.Name ) ) 
 
 formula.names = formulas$Formula.Name 
 
 formula.elements = read_excel( 
-    paste0( country.dir , formula.file ), 
+    paste0( data.dir ,  formula.file ), 
     sheet = 'Formula Elements') 
   
-# skip if using QR formula
+## Adjust when using an MDIVE quarterly report formula
+## (otherwise ignore) 
+QR = FALSE 
 if ( !QR ){ 
 formulas = formulas %>%
     mutate( Formula.id  = map_chr( Formula , 
@@ -98,7 +106,7 @@ formula_order = formulas$Formula.Name %>%
 formulas = formulas[ formula_order , ]
 
 # Metadata ####
-metadata.filename = metadata.file( country.dir, country )
+metadata.filename = metadata.file( data.dir, country )
 orgUnitLevels = OrgUnitLevels( metadata.filename  )
 orgUnits = OrgUnits( metadata.filename )
 dataSets = DataSets(  metadata.filename )
@@ -129,7 +137,7 @@ ous.id_parent = ous.id_parent %>% filter( !is.na( parent ) )
 ous.tree.file = files('ous.tree' , country = country , type = 'rds') %>% 
   most_recent_file()
 
-ous.tree.file = paste0( country.dir, ous.tree.file )
+ous.tree.file = paste0( data.dir, ous.tree.file )
 
 if( !ous_update & file.exists( ous.tree.file ) ){
   print( paste( 'reading' , ous.tree.file ))
@@ -138,7 +146,7 @@ if( !ous_update & file.exists( ous.tree.file ) ){
     print( 'preparing ous.tree')
     ous.tree = FromDataFrameNetwork( ous.id_parent )
     ous.tree.list = as.list( ous.tree )
-    ous.tree.file = paste0( country.dir, 'ous.tree_' , Sys.Date() , ".rds" )
+    ous.tree.file = paste0( data.dir, 'ous.tree_' , Sys.Date() , ".rds" )
     saveRDS( ous.tree.list , 
              file = ous.tree.file    ,
              compress = FALSE )
@@ -147,7 +155,7 @@ if( !ous_update & file.exists( ous.tree.file ) ){
 
 pathsFileName = files('paths' , country = country , type = 'rds') %>% 
   most_recent_file()
-pathsFileName = paste0( country.dir, pathsFileName )
+pathsFileName = paste0( data.dir, pathsFileName )
 
 
 if ( file.exists( pathsFileName )  & !ous_update ){
@@ -186,7 +194,7 @@ if ( file.exists( pathsFileName )  & !ous_update ){
   }
   ) 
   paths = bind_rows( paths )
-  pathsFileName = paste0( country.dir , country, 
+  pathsFileName = paste0( data.dir , country, 
                           '_paths_' , Sys.Date() , '.rds' ) 
   saveRDS( paths, pathsFileName )
   print( 'prepared paths and save to' , pathsFileName  ); toc()
@@ -278,7 +286,7 @@ for ( i in which( most_recent_data_files$update ) ){
   
   print( 'Formula.Name' ) ; print(  most_recent_data_files$formula[i] )
   
-  elements = api_formula_elements( most_recent_data_files$formula[i] , country.dir  ) %>%
+  elements = api_formula_elements( most_recent_data_files$formula[i] , data.dir  ) %>%
     str_replace_all(  '\r' , "") %>%
     str_replace_all(  '\n' , "") %>%
     str_replace_all(  ' ' , "") %>%
@@ -320,13 +328,13 @@ for ( i in which( most_recent_data_files$update ) ){
                  update = most_recent_data_files$update[i] & 
                    !is.na(most_recent_data_files$file[i]) ,
                  check_previous_years = YrsPrevious  , 
-                 previous_dataset_file = paste0( country.dir , 
+                 previous_dataset_file = paste0( data.dir , 
                                                  most_recent_data_files$file[i]) )
   
   min_period = min(str_split(periods, ";")[[1]])
   max_period = max(str_split(periods, ";")[[1]])
   period_string = ifelse( min_period == max_period , periods , glue::glue( min_period , "_", max_period ) )
-  save_to_filename =  paste0( country.dir, country, "_" , most_recent_data_files$formula[i]  , "_" , level ,"_", 
+  save_to_filename =  paste0( data.dir, country, "_" , most_recent_data_files$formula[i]  , "_" , level ,"_", 
                               period_string ,"_", Sys.Date() , ".rds") 
   saveRDS( x , save_to_filename )
   print( paste( 'finished downloading' , most_recent_data_files$formula[i] ,
@@ -373,13 +381,15 @@ reconvert = FALSE
 xlsx = FALSE
 summary =  FALSE
 
+### \\TODO: if previous data file does not exist, skip counts
+
 for ( i in which( !most_recent_data_files$update ) ){
 
   print( i )  ; print( most_recent_data_files$formula[i] ) 
 
   rdsFile = most_recent_data_files$file[i]
   
-  if ( !file.exists( paste0( country.dir , rdsFile) ) & !reconvert ) next
+  if ( !file.exists( paste0( data.dir , rdsFile) ) & !reconvert ) next
   
   rdsFileSplit = str_split( rdsFile, "_")[[1]]
   download_date = str_split( rdsFileSplit[length(rdsFileSplit)] , "\\.")[[1]][1]
@@ -387,7 +397,7 @@ for ( i in which( !most_recent_data_files$update ) ){
   periods = paste( rdsFileSplit[ 4:7], collapse = "_")
   level = rdsFileSplit[ 3 ]
   
-  data = readRDS( paste0( country.dir , rdsFile ) ) %>%
+  data = readRDS( paste0( data.dir , rdsFile ) ) %>%
     filter( !is.na( COUNT ) )
   
   # tanslate data 
@@ -449,7 +459,7 @@ for ( i in which( !most_recent_data_files$update ) ){
   
   formulaData.filename = str_replace( most_recent_data_files$file[i] ,
                                 ".rds" , "_formulaData.rds")
-  saveRDS( dataset , paste0( country.dir , formulaData.filename ) )
+  saveRDS( dataset , paste0( data.dir , formulaData.filename ) )
 
 if ( summary | xlsx ){
   ### NB: can make column for each 'box' by id or by label
@@ -552,7 +562,7 @@ if ( summary | xlsx ){
 
   summaryData.filename = str_replace( most_recent_data_files$file[i] ,
                                   ".rds" , "_summaryData.rds")
-  saveRDS( dataset_summary , paste0( country.dir , summaryData.filename ) )
+  saveRDS( dataset_summary , paste0( data.dir , summaryData.filename ) )
   # end summary
   }
 
@@ -560,7 +570,7 @@ if ( summary | xlsx ){
 if ( xlsx ){
     excelFileName = str_replace( rdsFile , ".rds" , "") %>% paste0( ".xlsx" )
 
-    if ( file.exists( paste0( country.dir , excelFileName) ) & !reconvert  ) next
+    if ( file.exists( paste0( data.dir , excelFileName) ) & !reconvert  ) next
 
     metadata = tibble( `Formula Name` = formula.names[i] , 
                        `Period` = periods , 
@@ -587,7 +597,7 @@ if ( xlsx ){
       writeDataTable( wb, sheet4, formulaData , rowNames = FALSE)
       writeDataTable( wb, sheet5, formulaSummaryDataset , rowNames = FALSE)
       
-      saveWorkbook( wb , paste0( country.dir, excelFileName ) , overwrite = TRUE )   
+      saveWorkbook( wb , paste0( data.dir, excelFileName ) , overwrite = TRUE )   
 }
 
 # end 

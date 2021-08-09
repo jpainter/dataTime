@@ -34,9 +34,9 @@ api_formula_elements = function( formulaName , dir =NULL , ...  ){
 }
 
 
-files = function(  search = 'All' , type = 'xlsx' , other = "" , ... ){
+files = function(  search = 'All' , type = 'xlsx' , other = "" , dir = NULL , ... ){
                         
-                      dir = file.dir( ... )
+                      if ( is.null( dir ) ) dir = file.dir( ... )
                       dir.files = list.files( dir )
                       search_and_type =  
                           str_detect( dir.files, fixed( search , ignore_case=TRUE )  )  &
