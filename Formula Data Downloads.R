@@ -6,7 +6,7 @@
 ## suggest a different directory for each.
 
 
-country = "Sierra Leone Demo" # e.g. "Malawi" must be in quotes
+country = "Sierra Leone Demo" # e.g. "Malawi" - must be in quotes
 
 ## location of folder with country data, metadata, etc.  
 ## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  

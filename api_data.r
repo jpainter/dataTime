@@ -52,12 +52,31 @@ file.dir = function( country = country ,
   paste0( dir.base , country , "/")
 }
 
-most_recent_file = function( file_list_with_date ){
-  file_list_with_date = file_list_with_date %>% unlist
-  rdsFileSplit = str_split( file_list_with_date , "_")
-  download_date = map( rdsFileSplit ,
-                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
-  ) %>% map_chr(1) 
+# most_recent_file = function( file_list_with_date ){
+#   file_list_with_date = file_list_with_date %>% unlist
+#   rdsFileSplit = str_split( file_list_with_date , "_")
+#   download_date = map( rdsFileSplit ,
+#                        ~str_split( .x[ length(.x)] , "\\.")[[1]]
+#   ) %>% map_chr(1) 
+#   
+#   dates  = map_chr( download_date , ~ anydate(.x)  )
+#   
+#   if ( identical( dates , character(0) ) ) return( NA )
+#   
+#   # most recent file 
+#   file = file_list_with_date[ which( dates == max(dates, na.rm = T ) ) ]
+#   
+#   return ( file )
+# }
+
+most_recent_file = function( file_list_with_date , mark = 3 ){
+  rdsFileSplit = str_split( file_list_with_date, "_")
+  # download_date = map( rdsFileSplit ,
+  #                      ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  # ) %>% map_chr(1) 
+  
+  download_date = map_chr( rdsFileSplit ,
+                           ~.x[which( grepl( fixed("-") , .x ) )] )
   
   dates  = map_chr( download_date , ~ anydate(.x)  )
   
