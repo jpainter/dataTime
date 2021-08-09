@@ -74,7 +74,7 @@ dir = function( country ){ file.dir( country ) }
 metadata.file = function( dir = NULL, country = country ){
   if ( is.null( dir ) ) dir  = dir( country )
   paste0( dir, 
-          files( 'meta' , country = country  ) )  %>%
+          files( 'meta' , dir = dir , country = country  ) )  %>%
     most_recent_file 
 }
                         
