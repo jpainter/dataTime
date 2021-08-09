@@ -5,6 +5,9 @@ date: "1/4/2021"
 output: 
   flexdashboard::flex_dashboard:
     orientation: rows
+    theme: 
+      version: 4
+      bootswatch: sandstone
 runtime: shiny
 ---
 
@@ -166,20 +169,26 @@ add_busy_spinner(spin = "fading-circle", position = "bottom-right")
 inputPanel(
   
   
-selectInput("Admn2", label = "Admn2" , 
+selectInput("level2", label = "OrgUnit Level2" , 
               choices = NULL, 
               selected = NULL ,
               multiple = TRUE ) ,
 
-selectInput("Admn3", label = "Admn3" ,
+selectInput("level3", label = "OrgUnit Level3" ,
               choices = NULL,
               selected = NULL ,
               multiple = TRUE ) ,
 
-selectInput("Admn4", label = "Admn4" ,
+selectInput("level4", label = "OrgUnit Level4" ,
               choices = NULL,
               selected = NULL  ,
               multiple = TRUE  ) ,
+
+selectInput("level5", label = "OrgUnit Level5" ,
+              choices = NULL,
+              selected = NULL  ,
+              multiple = TRUE  ) ,
+
   
   selectInput("data", label = "DataElement/Category" , 
               choices = NULL , 
@@ -514,30 +523,39 @@ d = reactive({
   data = dataset()  
   .period = period()
   
-  if ( !is_empty( input$Admn2 ) ){
-    print( paste( 'filtering data by' , levelNames()[2] , "=" , input$Admn2 ) )
+  if ( !is_empty( input$level2 ) ){
+    print( paste( 'filtering data by' , levelNames()[2] , "=" , input$level2 ) )
     data = data %>% 
-      filter( !! rlang::sym( levelNames()[2])  %in%   input$Admn2  )
+      filter( !! rlang::sym( levelNames()[2])  %in%   input$level2  )
     
-    print( paste( 'data filtered by Admn2 has' , nrow( data ), 'rows' ))
+    print( paste( 'data filtered by level2 has' , nrow( data ), 'rows' ))
     # glimpse( data )
   }
   
-    if ( !is_empty( input$Admn3 ) ){
-    print( paste( 'filtering data by' , levelNames()[3] , "=" , input$Admn3 ) )
+    if ( !is_empty( input$level3 ) ){
+    print( paste( 'filtering data by' , levelNames()[3] , "=" , input$level3 ) )
     data = data %>% 
-      filter( !! rlang::sym( levelNames()[3])  %in%   input$Admn3  )
+      filter( !! rlang::sym( levelNames()[3])  %in%   input$level3  )
     
-    print( paste( 'data filtered by Admn3 has' , nrow( data ), 'rows' ))
+    print( paste( 'data filtered by level3 has' , nrow( data ), 'rows' ))
     # glimpse( data )
     }
   
-if ( !is_empty( input$Admn4 ) ){
-    print( paste( 'filtering data by' , levelNames()[4] , "=" , input$Admn4 ) )
+if ( !is_empty( input$level4 ) ){
+    print( paste( 'filtering data by' , levelNames()[4] , "=" , input$level4 ) )
     data = data %>% 
-      filter( !! rlang::sym( levelNames()[4])  %in%   input$Admn4  )
+      filter( !! rlang::sym( levelNames()[4])  %in%   input$level4  )
     
-    print( paste( 'data filtered by Admn4 has' , nrow( data ), 'rows' ))
+    print( paste( 'data filtered by level4 has' , nrow( data ), 'rows' ))
+    # glimpse( data )
+}
+  
+if ( !is_empty( input$level5 ) ){
+    print( paste( 'filtering data by' , levelNames()[5] , "=" , input$level5 ) )
+    data = data %>% 
+      filter( !! rlang::sym( levelNames()[5])  %in%   input$level5  )
+    
+    print( paste( 'data filtered by level4 has' , nrow( data ), 'rows' ))
     # glimpse( data )
   }
   
@@ -1389,9 +1407,10 @@ aggregatePlotData = reactive({
       ifelse( selectedOUs() > 0 , 
            paste( comma( length( selectedOUs() ) ), 'facilities' ) ,
            "" ) ,
-    ifelse( nchar( input$Admn2 ) > 0, paste( input$Admn2 , collapse = "+" ) ) ,
-    ifelse( nchar( input$Admn3 ) > 0, paste(  "/" , input$Admn3 , collapse = "+" ) ) ,
-    ifelse( nchar( input$Admn4 ) > 0, paste(  "/" , input$Admn4, collapse = "+"   ) )
+    ifelse( nchar( input$level2 ) > 0, paste( input$level2 , collapse = "+" ) ) ,
+    ifelse( nchar( input$level3 ) > 0, paste(  "/" , input$level3 , collapse = "+" ) ) ,
+    ifelse( nchar( input$level4 ) > 0, paste(  "/" , input$level4, collapse = "+"   ) ) ,
+    ifelse( nchar( input$level5 ) > 0, paste(  "/" , input$level5, collapse = "+"   ) )
                          )
   })
 
@@ -1886,7 +1905,7 @@ output$plot_dTs.stl <- renderPlot({  plot_dTs.stl()  })
 Trend / Evaluation 
 ====================================
 
-Row 
+Row {data-height=350}
 -------------------------------------
 
 ### Intervention Date
@@ -1921,16 +1940,6 @@ selectInput("horizon", label = "Number periods after intervention:" ,
               selected = 12 ) 
 
 
-checkboxInput( "selected" , label ='Show selected facilities',
-               value = TRUE  ) 
-
-
-checkboxInput( "legend" , label ='Show legend',
-               value = FALSE  ) 
-
-checkboxInput( "plotly" , label ='Plotly Chart',
-               value = FALSE  ) 
-
 ```
 
 ### Forecast Type
@@ -1945,14 +1954,14 @@ checkboxInput( "plotly" , label ='Plotly Chart',
 checkboxInput( "smooth" , label ='Show smoothed trend line (loess)',
                value = FALSE  ) 
 
-checkboxInput( "pre_evaluation" , label ='Predicted values during year prior to intervention (to gauge accuracy of time-series model)',
+checkboxInput( "pre_evaluation" , label ='Pre-intervention model fit',
                value = FALSE  ) 
 
 
-checkboxInput( "evaluation" , label ='Predicted values during evaluation period (assuming no intervetion)',
+checkboxInput( "evaluation" , label ='Post-intervention evaluation',
                value = FALSE  ) 
 
-checkboxInput( "scale" , label ='Scale values (x/mean - 1)',
+checkboxInput( "scale" , label ='Scale values (x-mean)/sd + 1)',
                value = FALSE  ) 
 
 
@@ -2000,6 +2009,16 @@ selectInput("agg_level", label = "Aggregate to" ,
 checkboxInput( "facet_admin" , label ="Facet by admin",
                value = FALSE  )
 
+checkboxInput( "selected" , label ='Show selected facilities',
+               value = TRUE  ) 
+
+
+checkboxInput( "legend" , label ='Show legend',
+               value = FALSE  ) 
+
+checkboxInput( "plotly" , label ='Plotly Chart',
+               value = FALSE  ) 
+
 
 ```
 
@@ -2013,33 +2032,55 @@ observe({  updateSelectInput( session, 'agg_level' ,
   } )
 
 
-observe({  updateSelectInput( session, 'Admn2' ,
-                              choices = unique( 
-                                dataset()[, levelNames()[2] ] ) ,
+observe({  updateSelectInput( session, 'level2' ,
+                              choices = 
+                                dataset() %>% 
+                                  pull( !! rlang::sym( levelNames()[2]  ) ) %>% 
+                                  unique %>% str_sort(),
                               selected = NULL 
                               ) 
   } )
 
-observe({  updateSelectInput( session, 'Admn3' ,
+observe({  updateSelectInput( session, 'level3' ,
                               choices = 
                                 dataset() %>% 
                                   filter(
-                                  !! rlang::sym( levelNames()[2] ) %in% input$Admn2 ) %>% 
+                                  !! rlang::sym( levelNames()[2] ) %in% input$level2 ) %>% 
                                   pull( !! rlang::sym( levelNames()[3]  ) ) %>% 
-                                          unique ,
+                                  unique %>% str_sort() ,
                               selected = NULL 
                               ) 
   } )
 
-observe({  updateSelectInput( session, 'Admn4' ,
+observe({  updateSelectInput( session, 'level4' ,
                               choices = 
                                 dataset() %>% 
                                   filter(
-                                  !! rlang::sym( levelNames()[3] ) %in% input$Admn3 ) %>% 
+                                  !! rlang::sym( levelNames()[3] ) %in% input$level3 ) %>% 
                                   pull( !! rlang::sym( levelNames()[4]  ) ) %>% 
-                                          unique ,
+                                          unique %>% str_sort(),
                               selected = NULL 
                               ) 
+  } )
+
+level5 = reactive({
+    req( input$level4 )
+    req( levelNames() )
+    if( is.na( levelNames()[5] ) ) return( NA ) 
+
+    dataset() %>% 
+        filter(
+            !! rlang::sym( levelNames()[4] ) %in% 
+                       input$level4 ) %>% 
+        pull( !! rlang::sym( levelNames()[5]  ) ) %>% 
+        unique %>% str_sort()  
+})
+
+observe({  updateSelectInput( session, 'level5' ,
+                              choices = level5(),
+          selected = NULL 
+)
+                                  
   } )
 
 
@@ -2057,7 +2098,7 @@ admin_names = function( level = NULL ){
 ```
 
 
-Row 
+Row {data-height=650}
 -------------------------------------
 
 
@@ -2223,8 +2264,9 @@ trendData = reactive({
     # }
   
   if ( input$scale ) .d = .d %>% 
+      ungroup() %>%
       mutate( 
-        total = ( total/ mean( .d$total , na.rm = TRUE ) ) -1
+        total = scale( total ) + 1
     )
   
   print( 'end trend data():'); #print( class( .d ) ); # print(.d)
@@ -2411,6 +2453,8 @@ MAPE = reactive({
   return( scales::percent( e$mape )  )
   
 })
+
+
 
 key.mape = reactive({
   req( tsPreForecast() ) 
