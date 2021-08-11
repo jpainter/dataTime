@@ -11,9 +11,9 @@ p_load( knitr, scales, tidyverse, readxl, patchwork,
 options( dplyr.summarise.inform = FALSE )
 
 # Functions ####
-code.dir =  "../dataDictionary/dhis2_dictionary/"
-source(  paste0( code.dir, 'dhis2_functions.r') )
-source( paste0( code.dir, 'API.r') )
+# code.dir =  "../dataDictionary/dhis2_dictionary/"
+# source(  paste0( code.dir, 'dhis2_functions.r') )
+# source( paste0( code.dir, 'API.r') )
 
 api_formula_elements = function( formulaName , dir =NULL , ...  ){
   
@@ -49,8 +49,9 @@ files = function(  search = 'All' , type = 'xlsx' , other = "" , dir = NULL , ..
 
 file.dir = function( country = country ,
                      dir.base = '../dataDictionary/dhis2_dictionary/Formulas/' ){
-  paste0( dir.base , country , "/")
-}
+  if ( is_empty( dir.base ) | nchar(dir.base)< 1 ) dir.base = paste0( dir.base , country , "/")
+  return( dir.base )
+  }
 
 # most_recent_file = function( file_list_with_date ){
 #   file_list_with_date = file_list_with_date %>% unlist
@@ -69,6 +70,13 @@ file.dir = function( country = country ,
 #   return ( file )
 # }
 
+is_date = function(x, format = NULL) {
+  formatted = try(as.Date(x, format), silent = TRUE)
+  is_date = as.character(formatted) == x & !is.na(formatted)  # valid and identical to input
+  is_date[is.na(x)] = NA  # Insert NA for NA in x
+  return(is_date)
+}
+
 most_recent_file = function( file_list_with_date , mark = 3 ){
   rdsFileSplit = str_split( file_list_with_date, "_")
   # download_date = map( rdsFileSplit ,
@@ -76,7 +84,7 @@ most_recent_file = function( file_list_with_date , mark = 3 ){
   # ) %>% map_chr(1) 
   
   download_date = map_chr( rdsFileSplit ,
-                           ~.x[which( grepl( fixed("-") , .x ) )] )
+                           ~.x[which( !is.na(parse_date_time( .x ,orders="ymd")) )] )
   
   dates  = map_chr( download_date , ~ anydate(.x)  )
   
