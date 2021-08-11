@@ -633,7 +633,7 @@ Data
                 selectize = TRUE
                 ) ) 
   
-    checkboxInput( "total", label ='Total all categories', value = FALSE ) 
+    checkboxInput( "total", label ='Total all categories', value = TRUE ) 
 # )
 
 
