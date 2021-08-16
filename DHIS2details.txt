@@ -1,0 +1,18 @@
+
+## Enter country name
+## Note that all the values below, like country, must be in quotes 
+
+country = "Sierra Leone Demo" 
+
+## Enter data.dir below
+## data.dir is the location of folder with formula file, metadata, etc. (saved with Magic Glasses app) 
+## and location where downloaded data will be saved.  
+## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  
+
+data.dir = "~/_Malaria/Projects/dataDictionary/dhis2_dictionary/Formulas/DHIS2 Demo"  
+
+## Ener DHIS2 address and credentials below
+
+baseurl = "https://play.dhis2.org/2.36.3/" # note that need trailing "/"
+username = "admin"
+password = "district"

@@ -15,11 +15,11 @@ options( dplyr.summarise.inform = FALSE )
 # source(  paste0( code.dir, 'dhis2_functions.r') )
 # source( paste0( code.dir, 'API.r') )
 
-api_formula_elements = function( formulaName , dir =NULL , ...  ){
+api_formula_elements = function( formulaName , dir = NULL , ...  ){
   
-  # if (!is.null( dir ) ) dir = paste0( dir)
+  if ( is.null( dir ) ) dir = file.dir( ... )
   
-  formula.file = files('formula' , country = country )
+  formula.file = files('formula' , country = country , dir = dir )
   
   formula.elements = read_excel( 
     paste0( dir , formula.file[1]  ), 
@@ -34,7 +34,10 @@ api_formula_elements = function( formulaName , dir =NULL , ...  ){
 }
 
 
-files = function(  search = 'All' , type = 'xlsx' , other = "" , dir = NULL , ... ){
+files = function(  search = 'All' , 
+                   type = 'xlsx' , 
+                   other = "" , 
+                   dir = NULL , ... ){
                         
                       if ( is.null( dir ) ) dir = file.dir( ... )
                       dir.files = list.files( dir )
@@ -84,7 +87,7 @@ most_recent_file = function( file_list_with_date , mark = 3 ){
   # ) %>% map_chr(1) 
   
   download_date = map_chr( rdsFileSplit ,
-                           ~.x[which( !is.na(parse_date_time( .x ,orders="ymd")) )] )
+                           ~.x[which( !is.na(parse_date_time( .x ,orders="ymd", quiet = TRUE )) )] )
   
   dates  = map_chr( download_date , ~ anydate(.x)  )
   

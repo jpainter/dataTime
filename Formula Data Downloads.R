@@ -1,49 +1,19 @@
 # Script to download data defined by formulas saved in the Magic Glasses (data dictionary) app
 
-# setup =====
-
-## Replace the text values for country and data.directory.  If working on multiple country instances, 
-## suggest a different directory for each.
-
-
-country = "Sierra Leone Demo" # e.g. "Malawi" - must be in quotes
-
-## location of folder with country data, metadata, etc.  
-## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  
-
-data.dir = "~/my_data_folder/malaria/Sierra_Leone_Demo"  
-
-## DHIS2 address and credentials 
-
-baseurl = "https://play.dhis2.org/2.36.3/" # note that need trailing "/"
-username = "admin"
-password = "district"
-
-# Parameters for data requests
-level = 'All levels' # all org units
-YrsPrevious  = 5 # number of years of data to request 
-
-# First time this file is run, a rather length process maps the facility hierarchy
-# if need to update, change to TRUE 
-ous_update = FALSE   
-
-# for quarterly reports (ignore) 
-QR = FALSE 
-
 # libraries and functions ####
 pacman::p_load( scales, knitr, scales ,  #gsubfn  for strapplyc, line 221
-        tidyverse, progress , readxl, patchwork ,
-        tsibble, fable, fabletools, feasts, slider, anomalize ,
-        # gsubfn, proto ,
-        furrr, tictoc, ggrepel , sf , ggspatial ,
-        mdthemes, extrafont , hrbrthemes , openxlsx ,
-        data.tree, igraph , magrittr , progressr
-        )
+                tidyverse, progress , readxl, patchwork ,
+                tsibble, fable, fabletools, feasts, slider, anomalize ,
+                # gsubfn, proto ,
+                furrr, tictoc, ggrepel , sf , ggspatial ,
+                mdthemes, extrafont , hrbrthemes , openxlsx ,
+                data.tree, igraph , magrittr , progressr, varhandle 
+)
 
 
 source('dhis2_functions.R')  
 source( 'Deviation_Expected_Functions.R')
-# source( '../dhis2_dictionary/API.r')
+source( 'API.r')
 source( 'api_data.r')
 
 
@@ -60,6 +30,41 @@ stderr <- function(x, na.rm=TRUE ) {
 }
 
 
+# Files and Credentials =====
+
+## Replace the text values for country and data.directory.  If working on multiple country instances, 
+## suggest a different directory for each.
+
+source('DHIS2details.txt') # Copies in dhis2 login details.  
+
+# Confirm login credentials
+## login and credentials ----
+
+if ( any( is.null( c(baseurl, username, password ) ))){
+  credentials = read_excel( paste0( "../dataDictionary/dhis2_dictionary/Formulas/",
+                                    "_Instances_jp.xlsx")) %>%
+    filter( Instance == country )
+  
+  baseurl = credentials$IPaddress
+  username = credentials$UserName
+  password = credentials$Password
+
+}
+
+loginurl <-paste0( baseurl , "api/me" )
+GET( loginurl, authenticate( username, password ) )
+
+
+
+# Parameters for data requests
+level = 'All levels' # all org units
+YrsPrevious  = 5 # number of years of data to request 
+
+# First time this file is run, a rather length process maps the facility hierarchy
+# if need to update, change to TRUE 
+ous_update = FALSE   
+
+
 # Formulas  ####
 
 if ( is.null( data.dir) ) data.dir = dir( country )
@@ -70,7 +75,8 @@ has.slash.at.end = str_locate_all( data.dir , "/") %>%
 if ( !has.slash.at.end  ){ data.dir = paste0( data.dir , "/" ) }
 
 
-formula.file = files( 'Formula' , dir = data.dir , country = country ) %>% most_recent_file()
+formula.file = files( 
+  search = 'Formula' , dir = data.dir , country = country ) %>% most_recent_file()
 
 formulas =  read_excel( paste0( data.dir, formula.file ) , sheet = 'Formula') %>% 
   filter( !is.na( Formula.Name ) ) 
@@ -98,10 +104,12 @@ formulas = formulas %>%
 
 View( formulas )
 
-# Reorder 
+# Reorder (if formula starts with number, e.g. '1. confirmed cases', it will go first )
 formula_order = formulas$Formula.Name %>%
   map( ., ~ str_split(.x , ' '))  %>%
-  map( 1 ) %>% map_chr( 1 ) %>% parse_number() %>% order
+  map( 1 ) %>% map_chr( 1 ) %>% 
+  ifelse( check.numeric(str_sub( . , 1, 1 )), 
+          suppressWarnings( as.numeric( str_sub( . , 1, 1 ) ) )  , . )  %>% order
 
 formulas = formulas[ formula_order , ]
 
@@ -173,7 +181,7 @@ if ( file.exists( pathsFileName )  & !ous_update ){
   
   # sllllooowww
   n = length( nodes )
-  print( paste( 'there are', n , 'nodes.  Now preparint path for each'))
+  print( paste( 'there are', n , 'nodes.  Now preparing path for each'))
   tic()
 
   pb <- progress_bar$new( total = n  ,
@@ -197,7 +205,7 @@ if ( file.exists( pathsFileName )  & !ous_update ){
   pathsFileName = paste0( data.dir , country, 
                           '_paths_' , Sys.Date() , '.rds' ) 
   saveRDS( paths, pathsFileName )
-  print( 'prepared paths and save to' , pathsFileName  ); toc()
+  cat( 'prepared paths and save to' , pathsFileName  , "   ") ; toc()
 }
 
 paths.translated = paths %>% 
@@ -254,26 +262,7 @@ most_recent_data_files = tibble(
             )
 
 
-# View( most_recent_data_files )
-
-
-
-## login and credentials ----
-
-if ( any( is.null( c(baseurl, username, password ) ))){
-  credentials = read_excel( paste0( "../dataDictionary/dhis2_dictionary/Formulas/",
-                                    "_Instances_jp.xlsx")) %>%
-    filter( Instance == country )
-  
-  baseurl = credentials$IPaddress
-  username = credentials$UserName
-  password = credentials$Password
-
-}
-
-loginurl <-paste0( baseurl , "api/me" )
-GET( loginurl, authenticate( username, password ) )
-
+View( most_recent_data_files )
 
 
 # Request data ----
@@ -286,11 +275,12 @@ for ( i in which( most_recent_data_files$update ) ){
   
   print( 'Formula.Name' ) ; print(  most_recent_data_files$formula[i] )
   
-  elements = api_formula_elements( most_recent_data_files$formula[i] , data.dir  ) %>%
-    str_replace_all(  '\r' , "") %>%
-    str_replace_all(  '\n' , "") %>%
-    str_replace_all(  ' ' , "") %>%
-    str_trim 
+  elements = formula.elements %>% 
+    filter( Formula.Name %in%  most_recent_data_files$formula[i] ) %>%
+    select( dataElement.id , categoryOptionCombo.ids ) %>%
+    unite( "de" , sep = "." ) %>% 
+    pull(de ) %>% 
+    paste( collapse =  ";" )
   
   if ( QR ){
     elements = formulas %>%

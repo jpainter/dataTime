@@ -43,6 +43,7 @@ source( "clean_ts.r" )
 source( "outlier.r" )
 source( 'Deviation_Expected_Functions.R')
 source( 'api_data.r' )
+source( 'DToptions.R' )
 
 # most_recent_file = function( file_list_with_date , mark = 3 ){
 #   rdsFileSplit = str_split( file_list_with_date, "_")
@@ -1167,7 +1168,7 @@ plotData = reactive({
    req( input$data )
   
     data = d() %>%
-      mutate( Facilities = 'All' )
+      mutate( Selected = 'All' )
     
     # filter to selected category
     print( 'plotData filtered by' ); print( input$data )
@@ -1178,8 +1179,8 @@ plotData = reactive({
     print( 'length( selectedOUs()) ' ); print( length( selectedOUs())  )
     
    if ( length( selectedOUs()) > 0 ) data  = data %>%
-      mutate( Facilities = ifelse( 
-        orgUnit %in% selectedOUs() , 'Selected', 'Not selected' )
+      mutate( Selected = ifelse( 
+        orgUnit %in% selectedOUs() , 'Yes', 'No' )
       )
     
     # compare original and cleaned
@@ -1192,7 +1193,7 @@ plotData = reactive({
 group_by_cols = reactive({
     # req( input$split )
     print( "group_by_cols()")
-    group_by_cols =  c( period() , 'orgUnit', 'Facilities',
+    group_by_cols =  c( period() , 'orgUnit', 'Selected',
                         'dataSet' ) 
     
     group_by_cols = c( group_by_cols, levelNames() )
@@ -1311,7 +1312,7 @@ num_facilities = reactive({
   req( data.total() )
   print('num_facilities()')
   .d = data.total()
-  l = length( unique( .d$Facilities ) )
+  l = length( unique( .d$Selected ) )
   print( paste( 'number of Facilities', l ) )
   return( l )
 })
@@ -1341,7 +1342,7 @@ hts = reactive({
   
   # if >1 Facilities (ie. selected)
   if ( num_facilities() > 1 )  hts = paste( 
-           'Facilities *' , hts 
+           'Selected *' , hts 
            )
   
   # if >1 dataset 
@@ -1403,11 +1404,11 @@ aggregatePlotData = reactive({
      if ( num_facilities() > 1 ){
        print( 'num_facilities()>1:') ; 
        .d = .d %>% 
-       filter( !is_aggregated( Facilities )  ) %>%
-       mutate( Facilities = as.character( Facilities ) %>%
+       filter( !is_aggregated( Selected )  ) %>%
+       mutate( Selected = as.character( Selected ) %>%
            str_remove_all( "<aggregated>" )  )
        
-       print( unique(.d$Facilities))
+       print( unique(.d$Selected))
      }  
         
     # if split, remove aggregate grouping
@@ -1494,7 +1495,7 @@ plotAgregateValue = reactive({
   
   # facet when selected > 0
   if ( length( selectedOUs() ) > 0 ) g =
-  g + facet_wrap( vars( Facilities ) ,
+  g + facet_wrap( vars( Selected ) ,
                   scales = 'free' , ncol = 3 ) 
   
   # Time scales
@@ -2201,12 +2202,12 @@ sub_agg_level = reactive({
 trendData = reactive({
   req( data.hts() )
   # req( aggregatePlotData() )
-  print( 'trend data() ' )
+  print( 'trendData(): ' )
   
   .d = data.hts()
   
-  if (input$selected & !is.null( selectedOUs() ) ){
-    .d = .d %>% filter( Facilities == 'Selected' )
+  if (input$selected & num_facilities() > 1 ){
+    .d = .d %>% filter( Selected == 'Yes' )
   } 
     
   print( "input$agg_level:" ); print( input$agg_level )
@@ -2260,11 +2261,11 @@ trendData = reactive({
 
      if ( num_facilities() > 1 ){
        .d = .d %>%
-       filter( !is_aggregated( Facilities )  ) %>%
-       mutate( Facilities = as.character( Facilities ) %>%
+       filter( !is_aggregated( Selected )  ) %>%
+       mutate( Selected = as.character( Selected ) %>%
            str_remove_all( "<aggregated>" )  )
 
-       print( 'Facilities:') ; print( unique(.d$Facilities))
+       print( 'Facilities:') ; print( unique(.d$Selected))
      }
         
     # if split, remove aggregate grouping
@@ -2809,6 +2810,65 @@ output$vals <- renderPrint({
     y
   })
  
+
+```
+
+Table 
+====================================
+
+```{r dataTable}
+                      
+DTOutput( 'dataTable'   ) 
+
+
+
+tableData = reactive({
+  req( data.total() )
+  
+  .period = period()
+  key.cols = setdiff( group_by_cols() , .period )
+  print( "tableData key.cols: ")
+  print( key.cols )
+  
+  print( 'data for table' )
+  print( names( data.total() ))
+  
+  td = data.total() %>% as_tibble() %>%  
+    ungroup %>% 
+    # select(-Month)  %>% 
+    group_by( across( all_of(  {{key.cols}} ) ) ) %>%
+    # group_by( orgUnit, dataSet, Zone, District, Facility  ) %>%
+    summarise( n = n() )
+    
+  return( td )
+  
+})
+
+output$dataTable <- DT::renderDT(
+    datatable(
+      tableData() , 
+      filter = 'top' ,
+      extensions = 'Buttons', 
+      options = list(
+        initComplete = JS(
+            "function(settings, json) {",
+            "$(this.api().table().header()).css({'background-color': '#0894e5', 
+      'color': '#000000'});",
+            "}"),
+      pageLength = 100,
+      scrollY = "400px" ,
+      dom = 'Bfrtip',
+      buttons = 
+        list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+
+  )
+          )
+)
+
 
 ```
 
