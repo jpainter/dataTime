@@ -1932,6 +1932,67 @@ output$plot_dTs.stl <- renderPlot({  plot_dTs.stl()  })
 ```
 
 
+Table 
+====================================
+
+```{r dataTable}
+                      
+DTOutput( 'dataTable'   ) 
+
+
+
+tableData = reactive({
+  req( data.total() )
+  
+  .period = period()
+  key.cols = setdiff( group_by_cols() , .period )
+  print( "tableData key.cols: ")
+  print( key.cols )
+  
+  print( 'data for table' )
+  print( names( data.total() ))
+  
+  td = data.total() %>% as_tibble() %>%  
+    ungroup %>% 
+    # select(-Month)  %>% 
+    group_by( across( all_of(  {{key.cols}} ) ) ) %>%
+    # group_by( orgUnit, dataSet, Zone, District, Facility  ) %>%
+    summarise( n = n() )
+    
+  return( td )
+  
+})
+
+output$dataTable <- DT::renderDT(
+    datatable(
+      tableData() , 
+      filter = 'top' ,
+      extensions = 'Buttons', 
+      options = list(
+        initComplete = JS(
+            "function(settings, json) {",
+            "$(this.api().table().header()).css({'background-color': '#0894e5', 
+      'color': '#000000'});",
+            "}"),
+      pageLength = 100,
+      scrollY = "400px" ,
+      dom = 'Bfrtip',
+      buttons = 
+        list('copy', 'print', list(
+        extend = 'collection',
+        buttons = c('csv', 'excel', 'pdf'),
+        text = 'Download'
+      ))
+
+  )
+          )
+)
+
+
+```
+
+### Significance Testing
+
 Trend / Evaluation 
 ====================================
 
@@ -2144,8 +2205,8 @@ Row {data-height=650}
                  plotOutput( "plot_trends" ,
                              hover = "plot_hover"  )
                  # ) 
-selectInput( "var_y", "Y-Axis", choices = NULL )
-uiOutput( "dynamic" )
+# selectInput( "var_y", "Y-Axis", choices = NULL )
+# uiOutput( "dynamic" )
 
 observe({  
   updateSelectInput( session, 'var_y' ,
@@ -2299,7 +2360,7 @@ trendData = reactive({
         total = scale( total ) + 1
     )
   
-  print( 'end trend data():'); #print( class( .d ) ); # print(.d)
+  print( 'end trend data():'); print( glimpse( .d ) ); # print(.d)
 
   
   return( .d )
@@ -2815,94 +2876,434 @@ output$vals <- renderPrint({
 
 ```
 
-Table 
-====================================
-
-```{r dataTable}
-                      
-DTOutput( 'dataTable'   ) 
-
-
-
-tableData = reactive({
-  req( data.total() )
-  
-  .period = period()
-  key.cols = setdiff( group_by_cols() , .period )
-  print( "tableData key.cols: ")
-  print( key.cols )
-  
-  print( 'data for table' )
-  print( names( data.total() ))
-  
-  td = data.total() %>% as_tibble() %>%  
-    ungroup %>% 
-    # select(-Month)  %>% 
-    group_by( across( all_of(  {{key.cols}} ) ) ) %>%
-    # group_by( orgUnit, dataSet, Zone, District, Facility  ) %>%
-    summarise( n = n() )
-    
-  return( td )
-  
-})
-
-output$dataTable <- DT::renderDT(
-    datatable(
-      tableData() , 
-      filter = 'top' ,
-      extensions = 'Buttons', 
-      options = list(
-        initComplete = JS(
-            "function(settings, json) {",
-            "$(this.api().table().header()).css({'background-color': '#0894e5', 
-      'color': '#000000'});",
-            "}"),
-      pageLength = 100,
-      scrollY = "400px" ,
-      dom = 'Bfrtip',
-      buttons = 
-        list('copy', 'print', list(
-        extend = 'collection',
-        buttons = c('csv', 'excel', 'pdf'),
-        text = 'Download'
-      ))
-
-  )
-          )
-)
-
-
-```
-
-
 
 Significance Testing
 ====================================
 
-```{r , eval=FALSE }
+```{r significance_functions}
+
+forecast_distribution = function( forecast, var ){
+  
+    cat( 'forecast_distribution:')
+  
+    if ( ! "fbl_ts" %in% class( forecast ) ) cat("missing fbl_ts")
+    
+    # get components 
+    var = enquo( var )
+    r = forecast %>% pull( {{var}} )
+    
+    r.names = map( r, names ) %>% unlist %>% unique
+    print( 'forecast_distribution r.names:' ) ; print( r.names )
+      
+    if ( 'x' %in% r.names ){
+        
+       cat( 'forecast_distribution: x')
+      
+        # dist <- map( r, "x")
+        trans <- map( r, "transform") 
+
+        # differnece between forecast and actual
+        rd = forecast %>% 
+          mutate(
+            dist <- map( {{var}} , "x") 
+            # trans = map( value, "transform") ,
+            , .fore = map( dist, ~.x  )
+          ) 
+        
+        print( 'end forecast_distribution: x')
+        return( rd )
+        
+      }
+      
+    if ( 'dist' %in% r.names ){
+      
+      cat( 'forecast_distribution: dist')
+        
+        dist <- map( r, "dist")
+        trans <- map( r, "transform")
+        # generate 
+        gt = map( 1:length(r), ~{
+          t = trans[[.x]]
+          g = generate( dist[[.x]] ) %>% t 
+          return(g)
+        }  ) %>% unlist
+        
+        # differnece between forecast and actual
+        t = map( forecast$value, "transform")[[1]]
+        rd = forecast %>% 
+          mutate(
+            dist = map( {{var}}, "dist") ,
+            # trans = map( value, "transform") ,
+            .fore = map( dist, ~generate(.x) %>% t ) ,
+          ) 
+        
+        cat( 'end forecast_distribution: dist')
+        return( rd )
+        
+      }
+}
+
+# Difference over each iteration, which is naturally weighted
+mpe_distribution = function( forecast_distribution , var ){
+    
+  cat(' mpe_distribution:' )
+    var = enquo( var )
+    
+    index = tsibble::index( forecast_distribution )
+    
+    forecast_distribution %>%
+    unnest( .fore ) %>% 
+    group_by( {{ index }} ) %>%
+    mutate( n = row_number() ,
+            .fore = ifelse( is.na( {{var}}), NA, .fore ) 
+            ) %>%
+    group_by( n ) %>%
+    summarise( 
+        actual = sum( {{var}}, na.rm = T ) ,
+        .fore = sum( .fore , na.rm = T) 
+        ) %>%
+    ungroup() %>%
+    mutate( mpe = ( actual- .fore )/ .fore ,
+            mape = abs( actual- .fore )/ .fore ) 
+}
+
+# function to get probability than impact, e, greater than a value
+prb_change_lte = function( target_mpe , pe ){
+   pe = enquo( pe )
+   
+   mpe %>%
+     summarise(
+       n = sum( !is.na( {{pe}} ) ) ,
+       pe_lte_target = sum( {{pe}} <= target_mpe ) 
+     ) %>%
+     mutate( x = pe_lte_target / n ) %>%
+     pull( x )
+   
+}
+
+# plot error
+mpe_plot = function( .data , var, rope_range  = NULL   ){
+   var = enquo( var )
+   
+   me = .data %>% pull({{ var }})
+   
+   mean_me = mean( me , na.rm = T )
+   
+   cri = HDInterval::hdi( me , credMass = 0.9 ) %>% as.numeric()
+   cri_label = paste( '90% credible interval:\n[', 
+                      percent(cri[1], accuracy  = .1 ) , " - ", 
+                      percent(cri[2] , accuracy  = .1 ) , "]" , sep = "" )
+   
+   mpe_rope = rope( me , range =  rope_range )
+   mpe_rope_label = paste( 'Probabality in ROPE*\n [', 
+                           percent( rope_range[1], accuracy = .1 ) , "-" , 
+                           percent( rope_range[2] , accuracy = .1) , ']:', 
+                           percent( mpe_rope$ROPE_Percentage , accuracy = .1 ) )
+   
+   # Title text...
+   # if ( "mpe" %in%  var )
+  
+  g = 
+    ggplot( data = .data , aes( x = {{ var }} )) +
+    geom_histogram( aes(  y = ..count../sum(..count..) ) ,
+                    fill = 'dark gray', color = 'gray', binwidth = .01 ) +
+    theme_minimal() +
+    scale_x_continuous( labels = percent_format(accuracy = 1) , 
+                        breaks = seq(-1, 1, .1) ) +
+    labs( title = 'Posterior Distribution of Error' ,
+          # subtitle = {{ var }} ,
+          y = 'Probability' 
+          # x = {{ var }} ,
+          # , caption = "*Region of Practical Equivalence"
+          )
+
+  # add mean
+  g = g + 
+    # geom_vline( aes( xintercept = mean(e) ) , linetype = 'dashed' ) +
+    annotate( "segment" , x =  mean_me , xend =  mean_me , y = 0 , yend = .1 , 
+              color = 'black' , linetype = 'dashed')  + 
+    geom_text( aes( x = mean_me ,
+                    y = .1  , 
+                    label = paste('Mean:' , percent( mean_me , accuracy  = .1 )  ) ) )  +
+    
+    # cri
+    annotate( "segment" , x = cri[1] , xend = cri[1] , y = 0 , yend = .5 , color = 'blue' )  + 
+    annotate( "segment" , x = cri[2] , xend = cri[2] , y = 0 , yend = .5 , color = 'blue' )  +
+    annotate( "text" , x = cri[1] , y = .4 , color = 'blue', label = cri_label , hjust = - 0.1 ) 
+    
+    # rope
+  if ( !is.null( rope_range ) ) g = g +
+    annotate( "segment" , 
+              x = mpe_rope$ROPE_low , 
+              xend = mpe_rope$ROPE_low , y = 0 , yend = .5 , color = 'brown' )  + 
+    annotate( "segment" , 
+              x = mpe_rope$ROPE_high , 
+              xend = mpe_rope$ROPE_high , y = 0 , yend = .5 , color = 'brown' )  +
+    annotate( "text" , x =  0  , y = .5 , color = 'brown', 
+              label = mpe_rope_label , hjust = .5 , vjust = 1 )
+  
+  return( g )
+  }#### functionalize
+forecast_distribution = function( forecast, var ){
+    if ( ! "fbl_ts" %in% class( forecast ) ) cat("missing fbl_ts")
+    
+    # get components 
+    var = enquo( var )
+    r = forecast %>% pull( {{var}} )
+    dist <- map( r, "dist")
+    trans <- map( r, "transform")
+
+    # generate 
+    gt = map( 1:length(r), ~{
+    t = trans[[.x]]
+    g = generate( dist[[.x]] ) %>% t 
+    return(g)
+    }  ) %>% unlist
+
+    # differnece between forecast and actual
+    t = map( forecast$value, "transform")[[1]]
+    rd = forecast %>% 
+        mutate(
+        dist = map( {{var}}, "dist") ,
+        # trans = map( value, "transform") ,
+        .fore = map( dist, ~generate(.x) %>% t ) ,
+) 
+}
+
+# Difference over each iteration, which is naturally wieghted
+mpe_distribution = function( forecast_distribution , var ){
+    
+    var = enquo( var )
+    
+    index = tsibble::index( forecast_distribution )
+    
+    forecast_distribution %>%
+    unnest( .fore ) %>% 
+    group_by( {{ index }} ) %>%
+    mutate( n = row_number() ,
+            .fore = ifelse( is.na( {{var}}), NA, .fore ) 
+            ) %>%
+    group_by( n ) %>%
+    summarise( 
+        actual = sum( {{var}}, na.rm = T ) ,
+        .fore = sum( .fore , na.rm = T) 
+        ) %>%
+    ungroup() %>%
+    mutate( mpe = ( actual- .fore )/ .fore ,
+            mape = abs( actual- .fore )/ .fore ) 
+}
+
+# function to get probability than impact, e, greater than a value
+prb_change_lte = function( target_mpe , pe ){
+   pe = enquo( pe )
+   
+   mpe %>%
+     summarise(
+       n = sum( !is.na( {{pe}} ) ) ,
+       pe_lte_target = sum( {{pe}} <= target_mpe ) 
+     ) %>%
+     mutate( x = pe_lte_target / n ) %>%
+     pull( x )
+   
+}
+
+# plot error
+mpe_plot = function( .data , var, rope_range  = NULL   ){
+   var = enquo( var )
+   
+   me = .data %>% pull({{ var }})
+   
+   mean_me = mean( me , na.rm = T )
+   
+   cri = HDInterval::hdi( me , credMass = 0.9 ) %>% as.numeric()
+   cri_label = paste( '90% credible interval:\n[', 
+                      percent(cri[1], accuracy  = .1 ) , " - ", 
+                      percent(cri[2] , accuracy  = .1 ) , "]" , sep = "" )
+   
+   mpe_rope = rope( me , range =  rope_range )
+   mpe_rope_label = paste( 'Probabality in ROPE*\n [', 
+                           percent( rope_range[1], accuracy = .1 ) , "-" , 
+                           percent( rope_range[2] , accuracy = .1) , ']:', 
+                           percent( mpe_rope$ROPE_Percentage , accuracy = .1 ) )
+   
+   # Title text...
+   # if ( "mpe" %in%  var )
+  
+  g = 
+    ggplot( data = .data , aes( x = {{ var }} )) +
+    geom_histogram( aes(  y = ..count../sum(..count..) ) ,
+                    fill = 'dark gray', color = 'gray', binwidth = .01 ) +
+    theme_minimal() +
+    scale_x_continuous( labels = percent_format(accuracy = 1) , 
+                        breaks = seq(-1, 1, .1) ) +
+    labs( title = 'Posterior Distribution of Error' ,
+          # subtitle = {{ var }} ,
+          y = 'Probability' 
+          # x = {{ var }} ,
+          # , caption = "*Region of Practical Equivalence"
+          )
+
+  # add mean
+  g = g + 
+    # geom_vline( aes( xintercept = mean(e) ) , linetype = 'dashed' ) +
+    annotate( "segment" , x =  mean_me , xend =  mean_me , y = 0 , yend = .1 , 
+              color = 'black' , linetype = 'dashed')  + 
+    geom_text( aes( x = mean_me ,
+                    y = .1  , 
+                    label = paste('Mean:' , percent( mean_me , accuracy  = .1 )  ) ) )  +
+    
+    # cri
+    annotate( "segment" , x = cri[1] , xend = cri[1] , y = 0 , yend = .5 , color = 'blue' )  + 
+    annotate( "segment" , x = cri[2] , xend = cri[2] , y = 0 , yend = .5 , color = 'blue' )  +
+    annotate( "text" , x = cri[1] , y = .4 , color = 'blue', label = cri_label , hjust = - 0.1 ) 
+    
+    # rope
+  if ( !is.null( rope_range ) ) g = g +
+    annotate( "segment" , 
+              x = mpe_rope$ROPE_low , 
+              xend = mpe_rope$ROPE_low , y = 0 , yend = .5 , color = 'brown' )  + 
+    annotate( "segment" , 
+              x = mpe_rope$ROPE_high , 
+              xend = mpe_rope$ROPE_high , y = 0 , yend = .5 , color = 'brown' )  +
+    annotate( "text" , x =  0  , y = .5 , color = 'brown', 
+              label = mpe_rope_label , hjust = .5 , vjust = 1 )
+  
+  return( g )
+  }
+```
 
 
+```{r  }
 
-fd = forecast_distribution( fore , value )
 
-# fd %>% hilo(95)
-fd$actual = test$value 
-mpe = mpe_distribution( fd, actual )
-mean( mpe$mpe , na.rm = TRUE)
+sigData = reactive({
+  
+  req( trendData() )
+  req( tsForecast() )
+  print( 'sigData():' )
+  
+  # print( names( trendData() ) ) ; 
+  tsf = tsForecast()
+  td = trendData()
+  
+  # testing: 
+  # save(tsf, td,  file = 'tsftd.rda' )
+  
+  # glimpse( tsf ) 
+  
+  # fd = forecast_distribution( tsf , total )
+  # glimpse( fd ) 
+  
+  cat( 'create forecast_distribution():')
+  
+    if ( ! "fbl_ts" %in% class( tsf ) ) cat("not a fbl_ts")
+    
+    # get components 
+    r = tsf %>% pull( total )
+    
+    r.names = map( r, names ) %>% unlist %>% unique
+    print( 'forecast_distribution() r.names:' ) ; print( r.names )
+      
+    if ( 'x' %in% r.names ){
+        
+       cat( 'forecast_distribution(): x')
+      
+        # dist <- map( r, "x")
+        trans <- map( r, "transform") 
 
-train %>% autoplot +
-  autolayer( test , color = 'red') +
-  autolayer( fore , alpha = .5) +
-  theme_minimal() +
-  labs(x="", y = "")
+        # differnece between forecast and actual
+        fd = tsf %>% 
+          mutate(
+            dist <- map( total , "x" ) 
+            # trans = map( value, "transform") ,
+            , .fore = map( dist, ~.x  )
+          ) 
+        
+        print( 'end forecast_distribution(): x')
 
-mpe_plot( mpe, mpe )
-mpe_plot( mpe, mpe , rope_range = c(-.031,.031))
+      }
+      
+    if ( 'dist' %in% r.names ){
+      
+      cat( 'forecast_distribution(): dist')
+        
+        dist <- map( r, "dist")
+        trans <- map( r, "transform")
+        # generate 
+        gt = map( 1:length(r), ~{
+          t = trans[[.x]]
+          g = generate( dist[[.x]] ) %>% t 
+          return(g)
+        }  ) %>% unlist
+        
+        # differnece between forecast and actual
+        t = map( forecast$value, "transform")[[1]]
+        fd = forecast %>% 
+          mutate(
+            dist = map( {{var}}, "dist") ,
+            # trans = map( value, "transform") ,
+            .fore = map( dist, ~generate(.x) %>% t ) ,
+          ) 
+        
+        cat( 'end forecast_distribution(): dist')
 
-prb_change_lte( 0 , mpe )
-prb_change_lte( -.1 , mpe )
-rope_range = c(-.03 , .03 ) 
-rope( mpe$mpe , range =  rope_range )
+      }
+  
+  print( 'adding actual values' )
+  fd$actual = trendData() %>% 
+    rename( actual = total ) %>%
+    semi_join( fd %>% as_tibble() ) %>% pull( actual )
+  
+  print( 'forecast distribution'); glimpse( fd )
+  
+  print( 'end sigData():' )
+  return( fd )
+  
+})
+
+plotOutput( "plot_significance" )
+
+
+plotSig = reactive({
+  
+  print( 'plotSig():')
+  
+  req( sigData() )
+  
+  fd = sigData()
+  
+  cat('plotSig fd:' )
+  
+  mpe = mpe_distribution( fd , actual )
+
+  cat('plotSig mpe:' )
+  
+  g =  mpe_plot( mpe , mpe )
+  
+  
+  print( 'end plotSig():')
+  return(g)
+   
+} )
+  
+ 
+output$plot_significance <- renderPlot({ plotSig()  }) 
+
+# 
+# # fd %>% hilo(95)
+# fd$actual = test$value 
+# mpe = mpe_distribution( fd, actual )
+# mean( mpe$mpe , na.rm = TRUE)
+# 
+# 
+# 
+# mpe_plot( mpe, mpe )
+# mpe_plot( mpe, mpe , rope_range = c(-.031,.031))
+# 
+# prb_change_lte( 0 , mpe )
+# prb_change_lte( -.1 , mpe )
+# rope_range = c(-.03 , .03 ) 
+# rope( mpe$mpe , range =  rope_range )
 
 
 

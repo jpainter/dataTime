@@ -42,7 +42,8 @@ files = function(  search = 'All' ,
                       if ( is.null( dir ) ) dir = file.dir( ... )
                       if ( !dir.exists( dir ) ){ 
                         message("Files function: directory not found")
-                        assert_that( dir.exists( dir ) )
+                        return()
+                        # assert_that( dir.exists( dir ) )
                       }
                       
                       dir.files = list.files( dir )
