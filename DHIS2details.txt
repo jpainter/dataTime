@@ -9,7 +9,7 @@ country = "Sierra Leone Demo"
 ## and location where downloaded data will be saved.  
 ## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  
 
-data.dir = "~/_Malaria/Projects/dataDictionary/dhis2_dictionary/Formulas/DHIS2 Demo"  
+data.dir = "~/OneDrive - CDC/_Malaria/Projects/dataDictionary/dhis2_dictionary/Formulas/DHIS2 Demo"  
 
 ## Ener DHIS2 address and credentials below
 

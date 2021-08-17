@@ -31,7 +31,9 @@ pacman::p_load( officer , rvg ,
         fpp3  , fabletools  , 
         furrr, tictoc, magrittr, hrbrthemes, data.tree, igraph  ,
         sf, mapview, GGally , plotly , sugrrants, lemon , plotly ,
-        shinyscreenshot, ggrepel, shinybusy, DT
+        shinyscreenshot, ggrepel, shinybusy, DT ,
+        HDInterval ,rstanarm , bayestestR , 
+        see 
         )
 
 options( dplyr.summarise.inform = FALSE )
@@ -1214,9 +1216,9 @@ group_by_cols = reactive({
 
 data.total = reactive({
   req( plotData() )
-  req( group_by_cols() )
+  # req( group_by_cols() )
   req( period() )
-  print( 'data.total()')
+  print( 'data.total():')
 
   
   .period = period()
@@ -2868,6 +2870,42 @@ output$dataTable <- DT::renderDT(
   )
           )
 )
+
+
+```
+
+
+
+Significance Testing
+====================================
+
+```{r , eval=FALSE }
+
+
+
+fd = forecast_distribution( fore , value )
+
+# fd %>% hilo(95)
+fd$actual = test$value 
+mpe = mpe_distribution( fd, actual )
+mean( mpe$mpe , na.rm = TRUE)
+
+train %>% autoplot +
+  autolayer( test , color = 'red') +
+  autolayer( fore , alpha = .5) +
+  theme_minimal() +
+  labs(x="", y = "")
+
+mpe_plot( mpe, mpe )
+mpe_plot( mpe, mpe , rope_range = c(-.031,.031))
+
+prb_change_lte( 0 , mpe )
+prb_change_lte( -.1 , mpe )
+rope_range = c(-.03 , .03 ) 
+rope( mpe$mpe , range =  rope_range )
+
+
+
 
 
 ```

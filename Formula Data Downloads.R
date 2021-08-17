@@ -40,7 +40,7 @@ source('DHIS2details.txt') # Copies in dhis2 login details.
 # Confirm login credentials
 ## login and credentials ----
 
-if ( any( is.null( c(baseurl, username, password ) ))){
+if ( any( is_empty( c(baseurl, username, password ) ))){
   credentials = read_excel( paste0( "../dataDictionary/dhis2_dictionary/Formulas/",
                                     "_Instances_jp.xlsx")) %>%
     filter( Instance == country )
@@ -142,7 +142,9 @@ ous.id_parent = ous.id_parent %>% filter( !is.na( parent ) )
 
 
 # orgUnit.tree and path ----
-ous.tree.file = files('ous.tree' , country = country , type = 'rds') %>% 
+ous.tree.file = files('ous.tree' , country = country , 
+                      dir = data.dir , 
+                      type = 'rds') %>% 
   most_recent_file()
 
 ous.tree.file = paste0( data.dir, ous.tree.file )
@@ -161,7 +163,8 @@ if( !ous_update & file.exists( ous.tree.file ) ){
     print( paste( 'ous.tree saved to' , ous.tree.file ) ) ; toc()
 }
 
-pathsFileName = files('paths' , country = country , type = 'rds') %>% 
+pathsFileName = files('paths' , country = country , 
+                      dir = data.dir , type = 'rds') %>% 
   most_recent_file()
 pathsFileName = paste0( data.dir, pathsFileName )
 
@@ -237,11 +240,14 @@ subject = formulas$Formula.Name
 
 data.files = map( subject ,
                   ~{ 
-                    f = files( search = .x , country = country , 
+                    f = files( search = .x , 
+                               country = country , 
+                               dir = data.dir , 
                           other = "All Levels" , type = 'rds' ) 
                     starts_with_country = substr( f , 1, nchar(country)) == country 
                     not_dTs = !grepl('dTs', f , fixed = TRUE  )
-                    return( f[ starts_with_country & not_dTs ] )
+                    not_formulaData = !grepl('formulaData', f , fixed = TRUE  )
+                    return( f[ starts_with_country & not_dTs & not_formulaData ] )
                   }
 )
 
@@ -273,7 +279,7 @@ View( most_recent_data_files )
 
 for ( i in which( most_recent_data_files$update ) ){
   
-  print( 'Formula.Name' ) ; print(  most_recent_data_files$formula[i] )
+  cat( 'Formula.Name: ' , most_recent_data_files$formula[i] , "\n")
   
   elements = formula.elements %>% 
     filter( Formula.Name %in%  most_recent_data_files$formula[i] ) %>%
@@ -291,7 +297,7 @@ for ( i in which( most_recent_data_files$update ) ){
   }
   
   
-  print( 'Elements' ) ; print( elements )
+  # print( 'Elements' ) ; print( elements )
   
   # Periods
   periodType = formula.elements %>%
@@ -303,7 +309,7 @@ for ( i in which( most_recent_data_files$update ) ){
   if ( periodType == 'Weekly') periods = date_code_weekly( YrsPrevious = YrsPrevious )
 
   
-  print( 'period' ); print( periods )
+  cat( 'data is ' , periodType , "\n" )
   
   tic()
   Sys.time()
@@ -319,7 +325,9 @@ for ( i in which( most_recent_data_files$update ) ){
                    !is.na(most_recent_data_files$file[i]) ,
                  check_previous_years = YrsPrevious  , 
                  previous_dataset_file = paste0( data.dir , 
-                                                 most_recent_data_files$file[i]) )
+                                                 most_recent_data_files$file[i]) ,
+                 dir = data.dir
+                 )
   
   min_period = min(str_split(periods, ";")[[1]])
   max_period = max(str_split(periods, ";")[[1]])
@@ -327,26 +335,27 @@ for ( i in which( most_recent_data_files$update ) ){
   save_to_filename =  paste0( data.dir, country, "_" , most_recent_data_files$formula[i]  , "_" , level ,"_", 
                               period_string ,"_", Sys.Date() , ".rds") 
   saveRDS( x , save_to_filename )
-  print( paste( 'finished downloading' , most_recent_data_files$formula[i] ,
-                "saved to:" , save_to_filename) )
+  cat( 'finished downloading' , 
+       most_recent_data_files$formula[i] ,
+       "saved to:" , save_to_filename , "\n" , "\n")
   toc()
 
 }
 
 # Update list of downloaded files ----
 
-subject = formulas$Formula.Name 
-
 data.files = map( subject ,
                   ~{ 
-                    f = files( search = .x , country = country , 
-                               other = "All Levels" , type = 'rds' ) 
+                    f = files( search = .x , 
+                               country = country , 
+                               dir = data.dir , 
+                          other = "All Levels" , type = 'rds' ) 
                     starts_with_country = substr( f , 1, nchar(country)) == country 
                     not_dTs = !grepl('dTs', f , fixed = TRUE  )
-                    return( f[ starts_with_country & not_dTs ] )
+                    not_formulaData = !grepl('formulaData', f , fixed = TRUE  )
+                    return( f[ starts_with_country & not_dTs & not_formulaData ] )
                   }
 )
-
 # data.files
 
 ## Find most recent file 
@@ -363,7 +372,7 @@ most_recent_data_files = tibble(
     update = ifelse( days_old > 30 | is.na( date ) , TRUE , FALSE )
   )
 
-# View( most_recent_data_files )
+View( most_recent_data_files )
 
 # Translate, combine ous, and save  ####
 
@@ -379,7 +388,7 @@ for ( i in which( !most_recent_data_files$update ) ){
 
   rdsFile = most_recent_data_files$file[i]
   
-  if ( !file.exists( paste0( data.dir , rdsFile) ) & !reconvert ) next
+  if ( !file.exists( paste0( data.dir , rdsFile) ) | reconvert ) next
   
   rdsFileSplit = str_split( rdsFile, "_")[[1]]
   download_date = str_split( rdsFileSplit[length(rdsFileSplit)] , "\\.")[[1]][1]

@@ -2,14 +2,9 @@
 
 # Setup ====
 
+source('DHIS2details.txt') # Copies in dhis2 login details.  
 ## Replace the text values for country and data.directory.  
-
-country = "Malawi" # e.g. "Malawi" - must be in quotes
-
-## location of folder with country data, metadata, etc.  
-## In R, single backslash (\) slashes need to be replaced with either double back slash (\\), or forward slash(/)  
-
-data.dir = ""  
+## This is the same file used for Formula Data Downloads.R
 
 
 # Libraries ####
@@ -184,10 +179,10 @@ all.levels.data.files = data.dir.files[ grepl( 'All levels' , data.dir.files) &
                                      grepl( 'formulaData' , data.dir.files) 
                                      ] # lookup all xls files
 
-data.list  = tibble( 
-  file = all.levels.data.files , 
-  cat = map_chr( all.levels.data.files,  ~ str_split( .x , "All levels")[[1]][1] ) ,
-  date.part = map_chr( all.levels.data.files,  ~ str_split( .x , "All levels")[[1]][2] ) )
+# data.list  = tibble( 
+#   file = all.levels.data.files , 
+#   cat = map_chr( all.levels.data.files,  ~ str_split( .x , "All levels")[[1]][1] ) ,
+#   date.part = map_chr( all.levels.data.files,  ~ str_split( .x , "All levels")[[1]][2] ) )
 
 data.list = map_df( formula.names , 
                  ~ tibble(
@@ -198,7 +193,7 @@ data.list = map_df( formula.names ,
                  )
 )
 
-# data.files = 
+data.files = data.list$file
 # 
 # data.files = data.list %>% 
 #   group_by( cat ) %>%
@@ -258,7 +253,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
   ## Convert SUM and COUNT to numeric, 
   ## period from character to Month or Week
   tic()
-  # split into 1000 chuncks and observe progress
+  # split into 1000 chunks and observe progress
   n_splits = 1000
   row_splits = split( 1:nrow(df), cut_number( 1:nrow(df), n_splits ))
   
@@ -335,12 +330,10 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
    print( 'scan for key_entry_errors')
    key_entry_errors =
      count(as_tibble(df.ts %>% 
-                     filter(nchar(original)>3, 
+                     filter( nchar(original)>3 , 
                             effectiveLeaf ) ) , 
            original ) %>% 
      arrange(-n) 
-   print( "key_entry_errors:" ) 
-   print( key_entry_errors )
    
    # Default: values where the number happens at least 3 > than 
    # medianof the top 10 rows 
@@ -349,6 +342,9 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
        key_entry_errors %>% filter( row_number()<11 )  %>%
          pull( n ) )
        ) 
+   
+   print( "key_entry_errors:" ) 
+   print( key_entry_errors )
    
   print( 'scanning for MAD outliers ')
   .total = length( key_size( df.ts ) )

@@ -81,12 +81,11 @@ is_date = function(x, format = NULL) {
 }
 
 most_recent_file = function( file_list_with_date , mark = 3 ){
-  rdsFileSplit = str_split( file_list_with_date, "_")
-  # download_date = map( rdsFileSplit ,
-  #                      ~str_split( .x[ length(.x)] , "\\.")[[1]]
-  # ) %>% map_chr(1) 
   
-  download_date = map_chr( rdsFileSplit ,
+  files = str_replace_all( file_list_with_date, fixed(".") , "_")
+  fileSplit = str_split( files, fixed("_") )
+
+  download_date = map_chr( fileSplit ,
                            ~.x[which( !is.na(parse_date_time( .x ,orders="ymd", quiet = TRUE )) )] )
   
   dates  = map_chr( download_date , ~ anydate(.x)  )
@@ -98,6 +97,7 @@ most_recent_file = function( file_list_with_date , mark = 3 ){
   
   return ( file )
 }
+
 
 dir = function( country ){ file.dir( country ) }
 
@@ -219,7 +219,7 @@ fetch_get <- function( baseurl. , de. , periods. , orgUnits. , aggregationType. 
       
       } else {
       
-      if ( get.print ) print( paste( nrow( fetch ) , 'records\n' ) )
+      if ( get.print ) cat( paste( nrow( fetch ) , 'records\n' ) )
       
       de.cat = str_split( de. , fixed(".")) %>% unlist  
       
@@ -370,12 +370,12 @@ api_data = function(      periods = "LAST_YEAR" ,
       prev.periods = prev %>% pull( period ) %>% unique %>%  paste(. , collapse = ';')
       
       ## FETCH CURRENT VALUES of previous data 
-      print( 'checking previous counts\n' )
+      cat( 'checking previous counts\n' )
       current.count = fetch(  baseurl , elements , prev.periods , orgUnits. = "LEVEL-1" , "COUNT" )  %>%
         mutate(current.count = as.integer( value ) ) %>%
         select( - value )
       
-      print( 'checking previous values\n' )
+      cat( 'checking previous values\n' )
       current.value = fetch(  baseurl , elements , prev.periods , orgUnits. = "LEVEL-1" , "SUM" )  %>%
         mutate(current.value = as.integer( value ) ) %>%
         select( - value )
@@ -404,27 +404,28 @@ api_data = function(      periods = "LAST_YEAR" ,
         )
       
         
-        saveRDS( update_compare ,  paste0( dir, 'update_compare_', formula,"_", Sys.Date() , ".rds"))
+        saveRDS( update_compare ,  paste0( dir, 'update_compare_', formula,"_", Sys.Date() , ".rds") )
       
         prev.periods.same.data = update_compare %>% 
           group_by( period ) %>%
           filter( all( same ) ) %>%
           pull( period ) %>% unique 
         
-        if ( print ) print( paste( 'Previous data had the same data for ' , 
-                                   paste( prev.periods.same.data , collapse = ';') )
-        )
-        
-      
         update.periods = setdiff( period_vectors, prev.periods.same.data )
+        
+        if ( print ) cat(  'Need to update or get new data data for ' , 
+                                   paste( update.periods , collapse = ';') , "\n"
+        )
         
         period_vectors = update.periods
         
+    } else {
+       if ( print ) print( cat( 'Periods requested are' ,
+                                  paste( period_vectors , collapse = ';') , "\n" )
+       )
     } 
   
-   if ( print ) print( paste( 'Periods requested are' , 
-                              paste( period_vectors , collapse = ';') )
-   )
+
     
   
   # orgUnits ####
@@ -438,13 +439,13 @@ api_data = function(      periods = "LAST_YEAR" ,
     
   )
   
-  if ( print ) print( paste( 'Levels requested are' , 
-                             paste( orgUnits , collapse = ';') )
+  if ( print ) cat( 'Requesting data for' , 
+                    paste( orgUnits , collapse = ';') , "\n" 
   )
     
   ## Fetch requests ####
   
-  if ( parallel ) plan( multicore ) # plan( multisession ) for windows
+  if ( parallel ) plan( multisession ) # plan( multisession ) for windows
   if (!parallel ) plan( sequential )
 
     handlers(list(
@@ -489,8 +490,6 @@ api_data = function(      periods = "LAST_YEAR" ,
             
             d = d %>% select(-starts_with('aggreg'))
             
-            if ( print ) message( paste( comma( nrow( d ) ), "records"  ) )
-            
             return( d )
                 
             } 
@@ -499,6 +498,8 @@ api_data = function(      periods = "LAST_YEAR" ,
     
      if ( print ) message( "binding downloads" )
      d = bind_rows( d )
+     
+     if ( print ) cat( comma( nrow( d ) ), "records downloaded"  ,  "\n" )
      if ( print ) message( toc() )
      
      # update value in most_recent_data_file
