@@ -102,7 +102,8 @@ formulas = formulas %>%
     )
 }
 
-View( formulas )
+# View( formulas )
+print( formulas )
 
 # Reorder (if formula starts with number, e.g. '1. confirmed cases', it will go first )
 formula_order = formulas$Formula.Name %>%
@@ -268,7 +269,8 @@ most_recent_data_files = tibble(
             )
 
 
-View( most_recent_data_files )
+# View( most_recent_data_files )
+print( most_recent_data_files )
 
 
 # Request data ----
@@ -372,7 +374,8 @@ most_recent_data_files = tibble(
     update = ifelse( days_old > 30 | is.na( date ) , TRUE , FALSE )
   )
 
-View( most_recent_data_files )
+# View( most_recent_data_files )
+print( most_recent_data_files )
 
 # Translate, combine ous, and save  ####
 
