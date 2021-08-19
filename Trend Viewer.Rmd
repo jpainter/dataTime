@@ -350,7 +350,7 @@ rds_data_file = reactive({
   print( 'indicator:' ); print( input$indicator )
   
   file.type = 'rds' # input$file.type 
-  file.other = 'Seasonal' # input$file.other
+  file.other = '_Seasonal' # input$file.other
   file.label = 'formulaData'
   
   all.levels.data.files = dir.files[ grepl( 'All levels' , dir.files) &
@@ -2072,18 +2072,11 @@ selectInput("model", label = "Time-series model:" ,
 checkboxInput( "forecast_ci" , label ='Confidence interval',
                value = FALSE  ) 
 
-checkboxInput( "bootstrap" , label ='Bootstrap prediction',
-               value = FALSE  ) 
-
-selectInput("Reps", label = "Iterations" , 
-              choices = c(100, 1000, 5000, 10000) , 
-              selected = 1000  ) 
-
-# textInput( 'model_text' , label = 'Model' , value = NULL )
-
 checkboxInput('reconcile', label = 'Reconcile models' ,
             value = FALSE )
 
+checkboxInput('components', label = 'Visualize model components' ,
+            value = FALSE )
 
 ```
 
@@ -2195,7 +2188,7 @@ Row {data-height=650}
 
 ### Impact (plot_trends)
 
-```{r forecast_plot}
+```{r model_functions}
 
 # conditionalPanel( "input.plotly == true" ,
                   # plotlyOutput( "plotly_trends" ) 
@@ -2546,7 +2539,6 @@ MAPE = reactive({
 })
 
 
-
 key.mape = reactive({
   req( tsPreForecast() ) 
   req( trendData() ) 
@@ -2668,6 +2660,9 @@ ci_levels = reactive({
   return( 90 )
 })
 
+```
+
+```{r plot_trends}
 plotTrends = reactive({
   
   req( trendData() )
@@ -2857,10 +2852,43 @@ plotTrends = reactive({
 
 # output$plotly_trends <- renderPlotly({
 #   plotly::ggplotly( plotTrends() )  })
+ 
+```
 
-output$plot_trends <- renderPlot({ plotTrends()  })
+```{r plot_model_components}
+plotComponenets = reactive({
+  
+  req( tsModel() )
+  req( input$evaluation_month )
+  print( 'plotComponenets():' )
 
- output$dynamic <- renderUI({
+  g = tsModel() %>% fabletools::components() %>% autoplot
+  
+  print( 'end plotComponents():' )
+  
+  return( g )
+})
+
+
+# output$plotly_trends <- renderPlotly({
+#   plotly::ggplotly( plotTrends() )  })
+ 
+```
+
+```{r trend_output}
+
+plotTrendOutput = reactive({
+    if ( input$components ){
+        plotComponenets()  
+    } else {
+        plotTrends()  
+    }
+})
+
+output$plot_trends <-  renderPlot({ plotTrendOutput()  })
+        
+
+output$dynamic <- renderUI({
     req(input$plot_hover) 
     verbatimTextOutput("vals")
   })
@@ -2872,13 +2900,30 @@ output$vals <- renderPrint({
     req(nrow(y) != 0)
     y
   })
- 
+
+```
+
+Significance Testing
+====================================
+
+Row {data-height=350}
+-------------------------------------
+
+### Model parameters
+
+```{r}
+checkboxInput( "bootstrap" , label ='Bootstrap prediction',
+               value = TRUE  ) 
+
+selectInput("Reps", label = "Iterations" , 
+              choices = c(100, 1000, 5000, 10000) , 
+              selected = 100  ) 
+
+# textInput( 'model_text' , label = 'Model' , value = NULL )
 
 ```
 
 
-Significance Testing
-====================================
 
 ```{r significance_functions}
 
@@ -3171,6 +3216,9 @@ mpe_plot = function( .data , var, rope_range  = NULL   ){
   return( g )
   }
 ```
+
+Row {data-height=650}
+-------------------------------------
 
 
 ```{r  }
