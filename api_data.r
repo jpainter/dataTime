@@ -40,6 +40,12 @@ files = function(  search = 'All' ,
                    dir = NULL , ... ){
                         
                       if ( is.null( dir ) ) dir = file.dir( ... )
+                      if ( !dir.exists( dir ) ){ 
+                        message("Files function: directory not found")
+                        return()
+                        # assert_that( dir.exists( dir ) )
+                      }
+                      
                       dir.files = list.files( dir )
                       search_and_type =  
                           str_detect( dir.files, fixed( search , ignore_case=TRUE )  )  &
