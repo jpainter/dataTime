@@ -248,6 +248,111 @@ observeEvent( input$screenshot , {
 })
 ```
 
+
+
+
+Data
+===================================
+
+```{r data_inputs}
+
+  
+
+
+  textInput( "data.directory", label = "Data directory:", 
+             value = "../dataDictionary/dhis2_dictionary/Formulas/" ,
+             width = '100%'
+             # , style = "font-size: 50%;"
+             ) 
+ 
+  # selectInput("country", label = "DHIS2 instance (Country) Folder:" , 
+  #             choices = NULL 
+  # 
+
+  selectInput("indicator", label = "Indicator:" , 
+              width = '100%',
+              choices = NULL , 
+              selected = FALSE,
+              multiple = FALSE ,
+              selectize = FALSE, 
+              size = 4  ##needed for `selected = FALSE` to work ) 
+             ) 
+  
+  
+  selectInput("dataset", label = "Data files (from DQA modeling.R) :" , 
+              width = '100%',
+              choices = NULL , 
+              selected = FALSE,
+              multiple = FALSE ,
+              selectize = FALSE, 
+              size = 4  ##needed for `selected = FALSE` to work ) 
+             ) 
+  
+  
+
+  splitLayout( cellWidths = c("25%", "75%"), 
+               checkboxInput( "all_categories", 
+                              label = 'Select all dataElement/Categories',
+                              value = FALSE )  ,
+
+            div(id = "expr-container",
+                
+              selectInput("data_categories", label = "DataElement/Category" , 
+                  choices = NULL  ,
+                  selected = 1 ,
+                  width = "100%" ,
+                  multiple = TRUE ,
+                  selectize = TRUE
+                  ) 
+            )
+            )
+
+
+splitLayout( cellWidths = c("25%", "75%") ,
+               
+               checkboxInput( "dataset_merge", label ='Merge all datasets', value = FALSE ) ,
+ 
+    div(id = "expr-container",  
+       selectInput( "merge", label ='Merge datasets with selected dataElements/Categories (averages values when reported through multiple datasets)', 
+              choices = NULL  ,
+              selected = 1 ,
+              width = "100%" ,
+              multiple = TRUE ,
+              selectize = TRUE ) 
+       ) 
+)
+        
+
+inputPanel(
+ selectInput("level", label = "Organization Level:" ,
+              choices = c( 'leaf' ) ,
+              selected = NULL ) ,
+ 
+ checkboxInput('hts', label = "Use administrative hierarchy", 
+               value = TRUE ) ,
+ 
+ 
+ checkboxInput( "exclude_recent_month" , label ='Exclude most recent month?',
+               value = TRUE  ) 
+)
+
+
+# splitLayout( 
+#   textInput( "data.intervention", label = "Data intervention:", 
+#              value = "" ,
+#              width = '100%'
+#              # , style = "font-size: 50%;"
+#              ) ,
+#   
+#   selectInput("intervention.key", label = "Intervention key:" , 
+#               choices = NULL , 
+#               selected = NULL ) 
+#   
+# )
+
+```
+
+
 ```{r Formulas }
 
 
@@ -317,20 +422,70 @@ observe({  updateTextInput( session, 'startingYear' ,
 
 ```
 
-```{r d}
+```{r datasets}
+
+
+dataset = reactive({
+
+  req( input$dataset )
+  print( 'dataset():')
+  
+  print("ingesting..."); 
+  # showNotification( "reading data file", type = 'message' )
+
+  
+  if ( is_empty( input$dataset ) ) return( NULL )
+  
+  print( input$dataset )
+
+  # testing:
+  tic()
+  if ( !any(file.exists( input$dataset ))) return( NULL )
+  
+  # RDS 
+  dataset =  readRDS( input$dataset ) 
+  
+  print( "nrow( dataset )" ); print( nrow( dataset ) )
+  print( "add dataset info from formulas")
+  
+  dataset = dataset %>%
+    as_tibble() %>%
+    left_join( formula_elements() %>% 
+                 select( dataElement.id  , dataSet ) %>%
+                 distinct ,  
+               by = 'dataElement.id' )
+  
+  print( "nrow( dataset )" ); print( nrow( dataset ) )
+  print("done"); toc()
+  print( 'glimpse( dataset )' ); # glimpse( dataset )
+  #   glimpse( formula_elements() )
+
+  return( dataset )
+  
+})
+
+dataSets = reactive({
+  req( dataset() )
+  dataset() %>% filter( !is.na( dataSet ) ) %>%
+            pull( dataSet ) %>% unique
+})
+
+```
+
+```{r data_selections_updates}
 
 # update data directory/country
-observe({
-  req( input$data.directory  )
-  if ( dir.exists( input$data.directory ) ){ 
-    data.dirs = input$data.directory
-    print( 'updating country folder' )
-    updateSelectInput( session, 'country' , 
-                       choices =  list.dirs( data.dirs , recursive=FALSE) %>%
-                         basename
-    )
-  }
-} )
+# observe({
+#   req( input$data.directory  )
+#   if ( dir.exists( input$data.directory ) ){ 
+#     data.dirs = input$data.directory
+#     print( 'updating country folder' )
+#     updateSelectInput( session, 'country' , 
+#                        choices =  list.dirs( data.dirs , recursive=FALSE) %>%
+#                          basename
+#     )
+#   }
+# } )
 
 
 country_files = reactive({ 
@@ -381,7 +536,6 @@ rds_data_file = reactive({
 })
 
 
-
 xlxs_data_file = reactive({
   req( country_files() )
   req( input$indicator )
@@ -416,57 +570,13 @@ xlxs_data_file = reactive({
 
 })
 
-# Update list of datasets
+# Update list of data files
 observe({  updateSelectInput( session, 'dataset' , 
                               choices = rds_data_file() , 
                               selected = rds_data_file()[1] ) 
   } )
 
-dataset = reactive({
-
-  req( input$dataset )
-  print( 'dataset():')
-  
-  print("ingesting..."); 
-  # showNotification( "reading data file", type = 'message' )
-
-  
-  if ( is_empty( input$dataset ) ) return( NULL )
-  
-  print( input$dataset )
-
-  # testing:
-  tic()
-  if ( !any(file.exists( input$dataset ))) return( NULL )
-  
-  # RDS 
-  dataset =  readRDS( input$dataset ) 
-  
-  print( "nrow( dataset )" ); print( nrow( dataset ) )
-  print( "add dataset info from formulas")
-  
-  dataset = dataset %>%
-    as_tibble() %>%
-    left_join( formula_elements() %>% 
-                 select( dataElement.id  , dataSet ) %>%
-                 distinct ,  
-               by = 'dataElement.id' )
-  
-  print( "nrow( dataset )" ); print( nrow( dataset ) )
-  print("done"); toc()
-  print( 'glimpse( dataset )' ); # glimpse( dataset )
-  #   glimpse( formula_elements() )
-
-  return( dataset )
-  
-})
-
-dataSets = reactive({
-  req( dataset() )
-  dataset() %>% filter( !is.na( dataSet ) ) %>%
-            pull( dataSet ) %>% unique
-})
-
+# Update list of datasets
 observe({
   print( 'updating merge dataSets input' )
   req( dataSets() )
@@ -474,6 +584,43 @@ observe({
     updateSelectInput( session, 'merge' , 
                        choices =  dataSets() 
     )
+  }
+} )
+
+observeEvent( input$dataset_merge , {
+  print( 'updating merge dataSets to all' )
+  req( dataSets() )
+  if( input$dataset_merge == TRUE ){
+  if ( any( nchar( dataSets() > 0 ) ) ){ 
+    updateSelectInput( session, 'merge' , 
+                       choices =  dataSets() ,
+                       selected = dataSets() )
+  }
+  } else {
+    updateSelectInput( session, 'merge' , 
+                       choices =  dataSets() ,
+                       selected = NULL
+    )
+  }
+} )
+
+# update data_categories
+observe({
+  print( 'updating data_choices' )
+  updateSelectInput( session, 'data_categories' ,
+                     choices =   unique( dataset()$data ) ,
+                     selected = 1 )
+} )
+
+observeEvent( input$all_categories , {
+  print( 'updating data_categories to all' )
+  if( input$all_categories == TRUE ){
+  updateSelectInput( session, 'data_categories' , 
+                     choices =   unique( dataset()$data ) ,
+                     selected = unique( dataset()$data ) ) 
+  } else {
+    updateSelectInput( session, 'data_categories' , 
+                     choices =   unique( dataset()$data ) ) 
   }
 } )
 
@@ -508,25 +655,13 @@ period = reactive({
   return( period  )
 })
 
-observe({
-  print( 'updating data_choices' )
-  updateSelectInput( session, 'data_categories' ,
-                     choices =   unique( dataset()$data ) ,
-                     selected = 1 )
-} )
 
-observeEvent( input$all_categories == TRUE , {
-  print( 'updating data_categories to all' )
-  updateSelectInput( session, 'data_categories' , 
-                     choices =   unique( dataset()$data ) ,
-                     selected = unique( dataset()$data ) ) 
-} )
 
-observeEvent( input$all_categories == FALSE , {
-  print( 'updating data_categories' )
-  updateSelectInput( session, 'data_categories' , 
-                     choices =   unique( dataset()$data )  ) 
-} )
+
+```
+
+```{r data}
+
 
 
 d = reactive({
@@ -613,109 +748,7 @@ if ( !is_empty( input$level5 ) ){
   return( data )
 })
 
-
 ```
-
-
-
-Data
-===================================
-
-```{r}
-
-  
-
-
-  textInput( "data.directory", label = "Data directory:", 
-             value = "../dataDictionary/dhis2_dictionary/Formulas/" ,
-             width = '100%'
-             # , style = "font-size: 50%;"
-             ) 
- 
-  # selectInput("country", label = "DHIS2 instance (Country) Folder:" , 
-  #             choices = NULL 
-  # 
-
-  selectInput("indicator", label = "Indicator:" , 
-              width = '100%',
-              choices = NULL , 
-              selected = FALSE,
-              multiple = FALSE ,
-              selectize = FALSE, 
-              size = 4  ##needed for `selected = FALSE` to work ) 
-             ) 
-  
-  
-  selectInput("dataset", label = "dataset:" , 
-              width = '100%',
-              choices = NULL , 
-              selected = FALSE,
-              multiple = FALSE ,
-              selectize = FALSE, 
-              size = 4  ##needed for `selected = FALSE` to work ) 
-             ) 
-  
-  
-  
-  checkboxInput( "all_categories", label = 'All categories', value = FALSE ) 
-# )
-
-  # splitLayout( cellWidths = c("75%", "25%") , 
-    # inputPanel(
-    div(id = "expr-container",
-        
-      selectInput("data_categories", label = "DataElement/Category" , 
-                choices = NULL  ,
-                selected = 1 ,
-                width = "100%" ,
-                multiple = TRUE ,
-                selectize = TRUE
-                ) ) 
-
-
- # splitLayout( cellWidths = c("75%", "25%") , 
-    div(id = "expr-container",  
-       selectInput( "merge", label ='Merge datasets', 
-              choices = NULL  ,
-              selected = 1 ,
-              width = "100%" ,
-              multiple = TRUE ,
-              selectize = TRUE ) 
-       ) 
-        
-    checkboxInput( "dataset_merge", label ='Total unmerged datasets', value = TRUE ) 
- 
- 
-
-inputPanel(
- selectInput("level", label = "Organization Level:" ,
-              choices = c( 'leaf' ) ,
-              selected = NULL ) ,
- 
- checkboxInput('hts', label = "Use administrative hierarchy", 
-               value = TRUE ) ,
- 
- 
- checkboxInput( "exclude_recent_month" , label ='Exclude most recent month?',
-               value = TRUE  ) 
-)
-
-
-# splitLayout( 
-#   textInput( "data.intervention", label = "Data intervention:", 
-#              value = "" ,
-#              width = '100%'
-#              # , style = "font-size: 50%;"
-#              ) ,
-#   
-#   selectInput("intervention.key", label = "Intervention key:" , 
-#               choices = NULL , 
-#               selected = NULL ) 
-#   
-# )
-
-```
-
 
 Reporting 
 ====================================
@@ -2289,6 +2322,154 @@ sub_agg_level = reactive({
      pull( levelName )
 })
   
+
+MAPE = reactive({
+  req( tsPreForecast() ) 
+  print('MAPE')
+  predicted = tsPreForecast() %>% as_tibble() %>% select(-total)
+  actual =  trendData() 
+  d = predicted %>%
+     inner_join( actual , by = period() ) 
+ 
+  e = d %>% as_tibble() %>%
+        # group_by( orgUnit , data  )  %>%
+        summarise( 
+          mape = ifelse( mean( total , na.rm = T ) > 0 ,
+                       mean( abs( total - .mean ) , na.rm = T ) / 
+                       mean( total , na.rm = T ) ,
+                       NA ) 
+                   ) 
+  print( "MAPE"); print( e$mape)
+  return( scales::percent( e$mape )  )
+  
+})
+
+
+key.mape = reactive({
+  req( tsPreForecast() ) 
+  req( trendData() ) 
+  
+  print('key.mape')
+  
+  predicted = tsPreForecast() %>% 
+    rename( pred = .mean ) 
+  
+  actual =  trendData() %>% 
+    rename( actual = total )
+  
+  keyvars = key_vars( actual )
+  print('keyvars'); print( keyvars )
+  
+  truth = predicted %>% 
+     inner_join( actual , by = c( period() , keyvars  ) )  
+  
+  print( 'truth'); #print( truth )
+  
+  mid_point = round( as.integer( input$horizon ) /2  )
+  
+  e = truth %>%
+    group_by_key() %>%
+    index_by( 1 ) %>%
+    summarise( 
+          mape = ifelse( mean( pred , na.rm = T ) > 0 ,
+                       mean( abs( actual - pred ) , 
+                             na.rm = T ) / 
+                       mean( pred , na.rm = T ) ,
+                       NA ) ,
+          !! rlang::sym( period() )  := nth( !! rlang::sym( period() )  , mid_point ) ,
+          actual = ifelse( mape>=0 , max( actual, na.rm = TRUE ),
+                           min( actual, na.rm = TRUE  ) 
+                           #nth( actual , mid_point ) 
+          ) ,
+          just = ifelse( mape >= 0 , 2, -2 )
+          ) %>%
+  as_tibble() %>%
+      mutate( !! input$agg_level := 
+                as.character( !! rlang::sym( input$agg_level  ) ) )
+  
+  print( "end key.mape"); glimpse(e )
+  return( e )
+})
+
+MPE = reactive({
+  req( tsForecast() ) 
+
+  print('MPE')
+  
+  predicted = tsForecast() %>% as_tibble() %>% select(-total)
+  actual =  trendData() 
+  
+  d = predicted %>%
+     inner_join( actual , by = period() ) 
+ 
+  e = d %>% as_tibble() %>%
+        # group_by( orgUnit , data  )  %>%
+        summarise( 
+          mpe = ifelse( mean( .mean , na.rm = T ) > 0 ,
+                       mean(  total - .mean  , na.rm = T ) / 
+                       mean( .mean , na.rm = T ) ,
+                       NA ) 
+                   ) 
+  
+  print( "MPE"); print( e$mpe)
+  return( scales::percent( e$mpe )  )
+  
+})
+
+key.mpe = reactive({
+  req( tsForecast() ) 
+  req( trendData() ) 
+  
+  print('key.mpe')
+  
+  predicted = tsForecast() %>% 
+    rename( pred = .mean ) 
+  
+  actual =  trendData() %>% 
+    rename( actual = total )
+  
+  keyvars = key_vars( actual )
+  print('keyvars'); print( keyvars )
+  
+  truth = predicted %>% 
+     inner_join( actual , by = c( period(), keyvars  ) )  
+  
+  print( 'truth'); #print( truth )
+  
+  mid_point = round( as.integer( input$horizon ) /2  )
+  
+  e = truth %>%
+    group_by_key() %>%
+    index_by( 1 ) %>%
+    summarise( 
+          mpe = ifelse( mean( pred , na.rm = T ) > 0 ,
+                       mean( actual - pred  , na.rm = T ) / 
+                       mean( pred , na.rm = T ) ,
+                       NA ) ,
+          !! period()   := nth( !! rlang::sym( period() )  , mid_point ) , 
+           actual = ifelse( mpe>=0 , max( actual, na.rm = TRUE ),
+                           min( actual, na.rm = TRUE  ) 
+                           #nth( actual , mid_point ) 
+          ) ,
+          just = ifelse( mpe >= 0 , 1, -1 )
+          ) %>%
+  as_tibble()  %>%
+      mutate( !! input$agg_level := 
+                as.character( !! rlang::sym( input$agg_level  ) ) )
+  
+  print( "mpe"); #glimpse(e )
+  return( e )
+})
+
+ci_levels = reactive({
+  if ( ! input$forecast_ci ) return( NULL )
+  return( 90 )
+})
+
+```
+
+
+```{r trendData }
 trendData = reactive({
   req( data.hts() )
   # req( aggregatePlotData() )
@@ -2297,7 +2478,7 @@ trendData = reactive({
   .d = data.hts()
   
   if (input$selected & num_facilities() > 1 ){
-    .d = .d %>% filter( Selected == 'Yes' )
+    .d = .d %>% filter( Selected ==  'Reporting Each Month'  )
   } 
     
   print( "input$agg_level:" ); print( input$agg_level )
@@ -2392,7 +2573,10 @@ trendData = reactive({
   
   return( .d )
 })
+```
 
+
+```{r models_forecasts}
 evaluationParameters <- reactiveValues( Month  = NULL )
 
 tsModel = reactive({
@@ -2550,149 +2734,6 @@ tsPreForecast = reactive({
   # print( 'pre-fcast' ) ; print( fcast )
   return( fcast )
   })
-
-MAPE = reactive({
-  req( tsPreForecast() ) 
-  print('MAPE')
-  predicted = tsPreForecast() %>% as_tibble() %>% select(-total)
-  actual =  trendData() 
-  d = predicted %>%
-     inner_join( actual , by = period() ) 
- 
-  e = d %>% as_tibble() %>%
-        # group_by( orgUnit , data  )  %>%
-        summarise( 
-          mape = ifelse( mean( total , na.rm = T ) > 0 ,
-                       mean( abs( total - .mean ) , na.rm = T ) / 
-                       mean( total , na.rm = T ) ,
-                       NA ) 
-                   ) 
-  print( "MAPE"); print( e$mape)
-  return( scales::percent( e$mape )  )
-  
-})
-
-
-key.mape = reactive({
-  req( tsPreForecast() ) 
-  req( trendData() ) 
-  
-  print('key.mape')
-  
-  predicted = tsPreForecast() %>% 
-    rename( pred = .mean ) 
-  
-  actual =  trendData() %>% 
-    rename( actual = total )
-  
-  keyvars = key_vars( actual )
-  print('keyvars'); print( keyvars )
-  
-  truth = predicted %>% 
-     inner_join( actual , by = c( period() , keyvars  ) )  
-  
-  print( 'truth'); #print( truth )
-  
-  mid_point = round( as.integer( input$horizon ) /2  )
-  
-  e = truth %>%
-    group_by_key() %>%
-    index_by( 1 ) %>%
-    summarise( 
-          mape = ifelse( mean( pred , na.rm = T ) > 0 ,
-                       mean( abs( actual - pred ) , 
-                             na.rm = T ) / 
-                       mean( pred , na.rm = T ) ,
-                       NA ) ,
-          !! rlang::sym( period() )  := nth( !! rlang::sym( period() )  , mid_point ) ,
-          actual = ifelse( mape>=0 , max( actual, na.rm = TRUE ),
-                           min( actual, na.rm = TRUE  ) 
-                           #nth( actual , mid_point ) 
-          ) ,
-          just = ifelse( mape >= 0 , 2, -2 )
-          ) %>%
-  as_tibble() %>%
-      mutate( !! input$agg_level := 
-                as.character( !! rlang::sym( input$agg_level  ) ) )
-  
-  print( "end key.mape"); glimpse(e )
-  return( e )
-})
-
-MPE = reactive({
-  req( tsForecast() ) 
-
-  print('MPE')
-  
-  predicted = tsForecast() %>% as_tibble() %>% select(-total)
-  actual =  trendData() 
-  
-  d = predicted %>%
-     inner_join( actual , by = period() ) 
- 
-  e = d %>% as_tibble() %>%
-        # group_by( orgUnit , data  )  %>%
-        summarise( 
-          mpe = ifelse( mean( .mean , na.rm = T ) > 0 ,
-                       mean(  total - .mean  , na.rm = T ) / 
-                       mean( .mean , na.rm = T ) ,
-                       NA ) 
-                   ) 
-  
-  print( "MPE"); print( e$mpe)
-  return( scales::percent( e$mpe )  )
-  
-})
-
-key.mpe = reactive({
-  req( tsForecast() ) 
-  req( trendData() ) 
-  
-  print('key.mpe')
-  
-  predicted = tsForecast() %>% 
-    rename( pred = .mean ) 
-  
-  actual =  trendData() %>% 
-    rename( actual = total )
-  
-  keyvars = key_vars( actual )
-  print('keyvars'); print( keyvars )
-  
-  truth = predicted %>% 
-     inner_join( actual , by = c( period(), keyvars  ) )  
-  
-  print( 'truth'); #print( truth )
-  
-  mid_point = round( as.integer( input$horizon ) /2  )
-  
-  e = truth %>%
-    group_by_key() %>%
-    index_by( 1 ) %>%
-    summarise( 
-          mpe = ifelse( mean( pred , na.rm = T ) > 0 ,
-                       mean( actual - pred  , na.rm = T ) / 
-                       mean( pred , na.rm = T ) ,
-                       NA ) ,
-          !! period()   := nth( !! rlang::sym( period() )  , mid_point ) , 
-           actual = ifelse( mpe>=0 , max( actual, na.rm = TRUE ),
-                           min( actual, na.rm = TRUE  ) 
-                           #nth( actual , mid_point ) 
-          ) ,
-          just = ifelse( mpe >= 0 , 1, -1 )
-          ) %>%
-  as_tibble()  %>%
-      mutate( !! input$agg_level := 
-                as.character( !! rlang::sym( input$agg_level  ) ) )
-  
-  print( "mpe"); #glimpse(e )
-  return( e )
-})
-
-ci_levels = reactive({
-  if ( ! input$forecast_ci ) return( NULL )
-  return( 90 )
-})
 
 ```
 
