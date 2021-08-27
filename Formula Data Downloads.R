@@ -1,7 +1,7 @@
 # Script to download data defined by formulas saved in the Magic Glasses (data dictionary) app
 
 # libraries and functions ####
-pacman::p_load( scales, knitr, scales ,  #gsubfn  for strapplyc, line 221
+pacman::p_load( scales, knitr,  #gsubfn  for strapplyc, line 221
                 tidyverse, progress , readxl, patchwork ,
                 tsibble, fable, fabletools, feasts, slider, anomalize ,
                 # gsubfn, proto ,
@@ -30,17 +30,24 @@ stderr <- function(x, na.rm=TRUE ) {
 }
 
 
-# Files and Credentials =====
+# Credentials =====
 
 ## Replace the text values for country and data.directory.  If working on multiple country instances, 
 ## suggest a different directory for each.
+
+country = NULL 
+data.dir = NULL
+baseurl = NULL 
+username = NULL 
+password = NULL 
+
 
 source('DHIS2details.txt') # Copies in dhis2 login details.  
 
 # Confirm login credentials
 ## login and credentials ----
 
-if ( any( is_empty( c(baseurl, username, password ) ))){
+if ( any( is_empty( c(baseurl, username, password ) )) ){
   credentials = read_excel( paste0( "../dataDictionary/dhis2_dictionary/Formulas/",
                                     "_Instances_jp.xlsx")) %>%
     filter( Instance == country )
@@ -55,11 +62,6 @@ loginurl <-paste0( baseurl , "api/me" )
 GET( loginurl, authenticate( username, password ) )
 
 
-
-# Parameters for data requests
-level = 'All levels' # all org units
-YrsPrevious  = 5 # number of years of data to request 
-
 # First time this file is run, a rather length process maps the facility hierarchy
 # if need to update, change to TRUE 
 ous_update = FALSE   
@@ -67,7 +69,7 @@ ous_update = FALSE
 
 # Formulas  ####
 
-if ( is.null( data.dir) ) data.dir = dir( country )
+if ( is.null( data.dir) ) data.dir = file.dir( country )
 
 # make sure directory has terminal slash
 has.slash.at.end = str_locate_all( data.dir , "/") %>% 
@@ -128,8 +130,7 @@ ous.levels = orgUnitLevels
 
 # NIGERIA Exception
 ## Nigeria appears to have 6 levels, the last not named
-count( orgUnits , level )
-count( orgUnits , levelName )
+count( orgUnits , level , levelName )
 if ( country == 'Nigeria' ){
   ous.levels = ous.levels %>% 
   bind_rows( tibble(
@@ -137,7 +138,7 @@ if ( country == 'Nigeria' ){
   ))
 }
 
-ous.id_parent = ous %>% select( id, parent ) 
+ous.id_parent = ous %>% dplyr::select( id, parent ) 
 # Remove top value if it has missing parent.
 ous.id_parent = ous.id_parent %>% filter( !is.na( parent ) )
 
@@ -164,10 +165,10 @@ if( !ous_update & file.exists( ous.tree.file ) ){
     print( paste( 'ous.tree saved to' , ous.tree.file ) ) ; toc()
 }
 
-pathsFileName = files('paths' , country = country , 
-                      dir = data.dir , type = 'rds') %>% 
+pathsFileName = files( paste0( country, '_paths') , 
+                      dir = data.dir , type = 'rds') %>%
   most_recent_file()
-pathsFileName = paste0( data.dir, pathsFileName )
+pathsFileName = paste0( data.dir, pathsFileName ) 
 
 
 if ( file.exists( pathsFileName )  & !ous_update ){
@@ -202,7 +203,7 @@ if ( file.exists( pathsFileName )  & !ous_update ){
       as_tibble() %>%
       set_colnames( ous.levels$levelName[ 1:length(p[[1]]) ] ) %>%
       mutate( id = ids[.x] ) %>%
-      select( id, everything() )
+      dplyr::select( id, everything() )
   }
   ) 
   paths = bind_rows( paths )
@@ -214,7 +215,7 @@ if ( file.exists( pathsFileName )  & !ous_update ){
 
 paths.translated = paths %>% 
   pivot_longer( cols = -id , names_to = 'Level') %>%
-  left_join( ous %>% select( id, name ) , by = c( 'value' = 'id') ) %>%
+  left_join( ous %>% dplyr::select( id, name ) , by = c( 'value' = 'id') ) %>%
   pivot_wider( -value , names_from = Level, values_from = name )
 
 
@@ -258,28 +259,32 @@ data.files = map( subject ,
 
 most_recent_data_files = tibble(
   formula = subject ,
-  file = map_chr( data.files , most_recent_file ) 
+  file = map( data.files , most_recent_file ) 
   ) %>%
     mutate( date = map_chr( file, ~{
-            ifelse( is.na( .x ) , NA , 
+            ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
                     gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
             ) } ) ,
             days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
-            update = ifelse( days_old > 30 | is.na( date ) , TRUE , FALSE )
+            update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
             )
-
 
 # View( most_recent_data_files )
 print( most_recent_data_files )
 
+# Optional chance to select specific formulas. Ex c(5,7,8,10).  To get all, set = TRUE 
+select_formulas = TRUE # c(5,7,8,10) 
 
 # Request data ----
 
+## Parameters 
+level = 'All levels' # all org units
+YrsPrevious  = 6 # number of years of data to request 
 
 # QR periods 
 # periods = "202010;202011;202012;202101;202102;202103"
 
-for ( i in which( most_recent_data_files$update ) ){
+for ( i in which( most_recent_data_files$update )[ select_formulas ] ){
   
   cat( 'Formula.Name: ' , most_recent_data_files$formula[i] , "\n")
   
@@ -364,14 +369,14 @@ data.files = map( subject ,
 
 most_recent_data_files = tibble(
   formula = subject ,
-  file = map_chr( data.files , most_recent_file ) 
+  file = map( data.files , most_recent_file ) 
 ) %>%
   mutate( date = map_chr( file, ~{
-    ifelse( is.na( .x ) , NA , 
+    ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
             gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
     ) } ) ,
     days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
-    update = ifelse( days_old > 30 | is.na( date ) , TRUE , FALSE )
+    update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
   )
 
 # View( most_recent_data_files )
@@ -391,7 +396,7 @@ for ( i in which( !most_recent_data_files$update ) ){
 
   rdsFile = most_recent_data_files$file[i]
   
-  if ( !file.exists( paste0( data.dir , rdsFile) ) | reconvert ) next
+  if ( file.exists( paste0( data.dir , rdsFile) ) && !reconvert ) next
   
   rdsFileSplit = str_split( rdsFile, "_")[[1]]
   download_date = str_split( rdsFileSplit[length(rdsFileSplit)] , "\\.")[[1]][1]
@@ -418,9 +423,9 @@ for ( i in which( !most_recent_data_files$update ) ){
                      # formulaElements = formula.elements  , 
                      formulaElements = dataElements ,
                      ous = orgUnits ) %>% 
-    left_join( orgUnits %>% select( {{ orgUnitCols }} ), 
+    left_join( orgUnits %>% dplyr::select( {{ orgUnitCols }} ), 
                 by = c('orgUnit' = 'id') ) %>%
-    select( level, levelName, leaf, orgUnit , orgUnitName, period , 
+    dplyr::select( level, levelName, leaf, orgUnit , orgUnitName, period , 
             dataElement.id , dataElement,  
             categoryOptionCombo.ids , Categories ,
             SUM , COUNT ) %>%
@@ -449,7 +454,7 @@ for ( i in which( !most_recent_data_files$update ) ){
     group_by( orgUnit ) %>%
     summarise( n = max( COUNT ) ) %>%
     mutate( effectiveLeaf = ifelse( n == 1, TRUE, FALSE ) ) %>%
-    select( orgUnit , effectiveLeaf ) %>%
+    dplyr::select( orgUnit , effectiveLeaf ) %>%
     rename( id = orgUnit )
   
   # add paths 

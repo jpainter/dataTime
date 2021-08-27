@@ -703,22 +703,27 @@ api_last12months_national_data = function(
   
   translate_fetch = function( df , formulaElements , ous ){
     
+      fe = formulaElements  %>% 
+        dplyr::select( dataElement, dataElement.id , 
+                       Categories, categoryOptionCombo.ids ) %>%
+        separate_rows( Categories , categoryOptionCombo.ids, sep = ";" ) %>%
+        mutate( dataElement.id = dataElement.id %>% 
+                  str_trim ,
+                categoryOptionCombo.ids = categoryOptionCombo.ids %>% 
+                  str_trim )
+    
       df %>%
       
       rename( dataElement.id = dataElement , 
               categoryOptionCombo.ids = categoryOptionCombo 
       ) %>%
       
-      left_join( formulaElements %>% 
-                   select( dataElement, dataElement.id , 
-                           Categories, categoryOptionCombo.ids ) %>% 
-                   mutate( dataElement.id = dataElement.id %>% str_trim ,
-                           categoryOptionCombo.ids = categoryOptionCombo.ids %>% str_trim )  ,
+      left_join( fe   ,
                  by = c( "dataElement.id" , "categoryOptionCombo.ids" )
       ) %>%
       
       left_join( ous %>% 
-                   select( id, name, level, levelName )  %>% 
+                   dplyr::select( id, name, level, levelName )  %>% 
                    rename( orgUnit = id , orgUnitName = name ) ,
                  by = 'orgUnit' 
       )  

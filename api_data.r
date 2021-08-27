@@ -57,8 +57,11 @@ files = function(  search = 'All' ,
                       }
 
 file.dir = function( country = country ,
-                     dir.base = '../dataDictionary/dhis2_dictionary/Formulas/' ){
-  if ( is_empty( dir.base ) | nchar(dir.base)< 1 ) dir.base = paste0( dir.base , country , "/")
+                     dir.base = NULL ){
+  if ( is_empty( dir.base )  ){
+    dir.base = '../dataDictionary/dhis2_dictionary/Formulas/' 
+    dir.base = paste0( dir.base , country , "/")
+  } 
   return( dir.base )
   }
 
@@ -86,15 +89,18 @@ is_date = function(x, format = NULL) {
   return(is_date)
 }
 
-most_recent_file = function( file_list_with_date , mark = 3 ){
+most_recent_file = function( file_list_with_date ){
   
-  files = str_replace_all( file_list_with_date, fixed(".") , "_")
-  fileSplit = str_split( files, fixed("_") )
-
-  download_date = map_chr( fileSplit ,
-                           ~.x[which( !is.na(parse_date_time( .x ,orders="ymd", quiet = TRUE )) )] )
+  if ( is_empty( file_list_with_date ) ||  
+       file_list_with_date == 'character(0)' ) return("")
   
-  dates  = map_chr( download_date , ~ anydate(.x)  )
+  rdsFileSplit = str_split( file_list_with_date, "_")
+  # download_date = map( rdsFileSplit ,
+  #                      ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  # ) %>% map_chr(1) 
+  
+  dates  = map( rdsFileSplit , ~ anydate(.x)  ) %>% 
+      map(., max, na.rm = T) %>% unlist
   
   if ( identical( dates , character(0) ) ) return( NA )
   

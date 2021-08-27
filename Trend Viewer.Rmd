@@ -295,9 +295,10 @@ Data
                               label = 'Select all dataElement/Categories',
                               value = FALSE )  ,
 
-            div(id = "expr-container",
+  div(id = "expr-container",
                 
-              selectInput("data_categories", label = "DataElement/Category" , 
+              selectInput("data_categories", 
+                          label = "DataElement/Category" , 
                   choices = NULL  ,
                   selected = 1 ,
                   width = "100%" ,
@@ -307,20 +308,23 @@ Data
             )
             )
 
-
+  
+# div(id = "expr-container", 
 splitLayout( cellWidths = c("25%", "75%") ,
                
-               checkboxInput( "dataset_merge", label ='Merge all datasets', value = FALSE ) ,
+       checkboxInput( "dataset_merge", 
+                     label ='Merge all datasets', value = FALSE ) ,
  
-    div(id = "expr-container",  
-       selectInput( "merge", label ='Merge datasets with selected dataElements/Categories (averages values when reported through multiple datasets)', 
+        
+       selectInput( "merge", 
+                    label ='Merge datasets with selected dataElements/Categories (averages values when reported through multiple datasets)', 
               choices = NULL  ,
               selected = 1 ,
               width = "100%" ,
               multiple = TRUE ,
               selectize = TRUE ) 
        ) 
-)
+# )
         
 
 inputPanel(
@@ -337,7 +341,7 @@ inputPanel(
 )
 
 
-# splitLayout( 
+# splitLayout(  cellWidths = c("55%", "45%") ,
 #   textInput( "data.intervention", label = "Data intervention:", 
 #              value = "" ,
 #              width = '100%'
@@ -372,12 +376,16 @@ if ( !has.slash.at.end  ){ data.dir = paste0( data.dir , "/" ) }
 formula.file = reactive({ 
   req( data.folder() )
 
-  ff = paste0( data.folder() , 
-          files( search = 'Formula' , dir = data.folder() )  %>% 
-            most_recent_file() 
-          )
+  ff = files( search = 'Formula' , dir = data.folder() )  
+  if ( is_empty( ff ) ){
+    print( 'no forumula files in directory' )
+    return( NULL )
+  } 
+    
+  ff = paste0( data.folder() , ff %>% most_recent_file() )
   
   print( 'formula.file' ) ; print( ff )
+  if ( !any(file.exists( ff ) )) return()
   return( ff )
   })
 
@@ -387,6 +395,7 @@ formulas =  reactive({
   print( 'formula file:') ; print( formula.file() )
   
   if ( !any(file.exists( formula.file() ) )) return( NULL )
+  
   formulas = read_excel( formula.file() , sheet = 'Formula') %>% 
     filter( !is.na(Formula.Name)) %>%
     arrange( Formula.Name )
@@ -662,8 +671,6 @@ period = reactive({
 
 ```{r data}
 
-
-
 d = reactive({
 
   req( dataset() )
@@ -822,7 +829,7 @@ annual.reports = reactive({
 
 orgunit.monthly.reports = reactive({ 
   req( input$data_categories )
-  print( 'orgunit.monthly.reports' )
+  print( 'orgunit.monthly.reports():' )
   
   # mrp = most_recent_period()
   .period = period()
@@ -844,7 +851,7 @@ orgunit.monthly.reports = reactive({
   # %>%
   # mutate( year = factor( year ) )
 
-  print( 'end orgunit.monthly.reports' )
+  print( 'end orgunit.monthly.reports()' )
   # print(head(o.m.r))
   return(o.m.r)
 })
@@ -852,7 +859,7 @@ orgunit.monthly.reports = reactive({
 monthly.reports = reactive({ 
   req( orgunit.monthly.reports() )
   req( period() )
-  print( 'monthly reports()' )
+  print( 'monthly reports():' )
   
   .period = period()
  
@@ -1044,7 +1051,7 @@ plotOutput( 'plot_reporting_by_month' ,
 
 plot2 = reactive({
   req( monthly.reports() )
-  print('plot2')
+  print('plot2():')
   .period = period()
   
   # save data for testing ggplot options
@@ -1176,7 +1183,7 @@ plotOutput( 'plot_reports_in_a_year' ,
 ```{r plot1 }
 
 plot1 = reactive({
-  print( 'plot1' )
+  print( 'plot1():' )
   req( annual.reports() )
   req( period() )
   .period = period()
@@ -1231,7 +1238,7 @@ plotOutput( 'plot_values' ,
     )
 
 plotData = reactive({
-   print( 'plotData()')
+   print( 'plotData():')
    req( d() )
    req( input$data_categories )
   
@@ -1249,7 +1256,9 @@ plotData = reactive({
     
    if ( length( selectedOUs()) > 0 ) data  = data %>%
       mutate( Selected = ifelse( 
-        orgUnit %in% selectedOUs() , 'Reporting Each Month', 'Inconsistent Reporting' )
+        orgUnit %in% selectedOUs() , 
+        'Reporting Each Month', 
+        'Inconsistent Reporting' )
       )
     
     # compare original and cleaned
@@ -1261,7 +1270,7 @@ plotData = reactive({
 
 group_by_cols = reactive({
     # req( input$split )
-    print( "group_by_cols()")
+    print( "group_by_cols():")
     group_by_cols =  c( period() , 'orgUnit', 'Selected',
                         'dataSet' ) 
     
@@ -1276,7 +1285,7 @@ group_by_cols = reactive({
     # # If not merge when total, show separate datsets
     # if ( !input$merge & input$all_categories ) group_by_cols = c( group_by_cols , 'dataSet' )
     #   
-    print( "end group_by_cols()") ; #print( group_by_cols )
+    print( "end group_by_cols()") ; print( unique( group_by_cols )  )
     return( unique( group_by_cols ) )
 
 })
@@ -1291,14 +1300,14 @@ data.total = reactive({
   .period = period()
   # if ( input$merge & input$all_categories ){
     
-    .group_by_cols = unique( c( group_by_cols() ) )
+    .group_by_cols =  group_by_cols()  
     # print( '.group_by_cols:' ) ; print( .group_by_cols )
 
     # Total categories by facilities and datasets
     data = plotData() 
     # %>% 
     #   group_by(  !!! dataset_group_by_cols  ) 
-
+    print( 'setDT(data):' )
     data = setDT(data)[ , .( total = sum( dataCol , na.rm = TRUE  ) ) ,
                            by = .group_by_cols ] %>% 
       as_tibble()
@@ -1372,6 +1381,9 @@ data.total = reactive({
   
   print( 'data.total finalized' ); # print( toc())
 
+  # test:
+  saveRDS( data.total, 'data.total.rds')
+  
   return( data.total )
     
 
@@ -1607,6 +1619,7 @@ Row
 
 ous.file = reactive({
   req( data.folder() )
+  print( 'ous.file(): ')
   
   dir = data.folder() 
   
@@ -1616,16 +1629,20 @@ ous.file = reactive({
     
     } else {
     
+    print( 'looking for geofeatures file' )
     dir.files = list.files( dir )
     ous.files = dir.files[ grepl( 'geoFeatures' , dir.files,
                                               fixed = TRUE  )]
+    
     print( "ous.files:" ) ; print( ous.files )
+    if (  is_empty(ous.files) ) return( NULL )
+  
     f = paste0( dir, most_recent_file( ous.files ) )
     }
-  
+    
     print( 'ous file:' ) ; print( f )
     
-    if ( !any(file.exists( f ) )) return( NULL )
+    if ( !any(file.exists( f ) )  ) return( NULL )
     
     return( f )
 })
@@ -1642,19 +1659,23 @@ ous = reactive({  print( 'reading ous file' ) ;
   })
 
 levelNames = reactive({ 
+  req( ous() )
+  print( 'levelNames():' )
   l = count( ous() %>% as_tibble, level, levelName ) %>% 
     arrange( level ) %>% pull(levelName ) 
   l = l[ !is.na(l) ]
+  print( 'end levelNames():' )
   return(l)
 })
 
 levels = reactive({ 
+  print( 'levels():' )
   levels = 
     count( ous() %>% as_tibble, level, levelName ) %>% 
     arrange( level ) 
   print( "levels()"); print( levels )
   return( levels )
-  
+  print( 'end levels():' )
 })
 
 observeEvent( levelNames(), 

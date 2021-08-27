@@ -1,6 +1,15 @@
 # Script to clean data downloaded from 'Formula Data Downloads.R'
 
-# Setup ====
+# Credentials =====
+
+## Replace the text values for country and data.directory.  If working on multiple country instances, 
+## suggest a different directory for each.
+
+country = NULL 
+data.dir = NULL
+baseurl = NULL 
+username = NULL 
+password = NULL 
 
 source('DHIS2details.txt') # Copies in dhis2 login details.  
 ## Replace the text values for country and data.directory.  
@@ -8,18 +17,20 @@ source('DHIS2details.txt') # Copies in dhis2 login details.
 
 
 # Libraries ####
-pacman::p_load( officer , rvg ,tidyverse, scales, 
-         data.table, tidyfast, tidytable, 
-        lubridate , anytime, progressr , assertthat ,
-        readxl, patchwork, cowplot, kableExtra ,
-        tsibble, fable, fabletools, feasts, 
-        fable.prophet ,  fable.bsts , 
-        slider, anomalize, brolgar ,
-        tsbox , CausalImpact , tibbletime , dygraphs , 
-        fpp3  , fabletools, 
-        furrr, tictoc, magrittr, hrbrthemes, data.tree, igraph ,
-        sf, mapview, GGally , plotly , sugrrants
-        )
+
+pacman::p_load( data.table ,scales, knitr, scales ,  
+                #gsubfn  for strapplyc, line 221
+                tidyverse, progress , readxl, patchwork , anytime ,
+                tsibble, fable, fabletools, feasts, slider, anomalize ,
+                # gsubfn, proto ,  fable.bsts ,  
+                fable.prophet , 
+                tsbox , brolgar ,
+                furrr, tictoc, ggrepel , sf , ggspatial ,
+                mdthemes, extrafont , hrbrthemes , openxlsx ,
+                data.tree, igraph , magrittr , progressr, varhandle ,
+                assertthat, kableExtra, GGally # feather
+)
+
 # Functions ####
 
 source( 'TS_Modeling_Functions.r')
@@ -153,7 +164,7 @@ unseasonal = function( x ,
 
 # Formulas  ####
 
-if ( is_empty( data.dir) | nchar( data.dir ) < 1 ) data.dir = dir( country )
+if ( is_empty( data.dir) | ( !is_empty( data.dir ) && nchar( data.dir ) < 1 ) ) data.dir = dir( country )
 
 # make sure directory has terminal slash
 has.slash.at.end = str_locate_all( data.dir , "/") %>% 
@@ -172,28 +183,54 @@ formula.names = formulas$Formula.Name
 
 # Data files ####
 
-data.dir.files = list.files( data.dir )
-all.levels.data.files = data.dir.files[ grepl( 'All levels' , data.dir.files) & 
-                                     grepl( 'rda|rds' , data.dir.files) &
-                                     !grepl( 'df.ts.rds', data.dir.files ) &
-                                     grepl( 'formulaData' , data.dir.files) 
-                                     ] # lookup all xls files
+# data.dir.files = list.files( data.dir )
+# all.levels.data.files = data.dir.files[ grepl( 'All levels' , data.dir.files) & 
+#                                      grepl( 'rda|rds' , data.dir.files) &
+#                                      !grepl( 'df.ts', data.dir.files ) &
+#                                      grepl( 'formulaData' , data.dir.files) 
+#                                      ] # lookup all xls files
+# 
+# 
+# data.files = map( all.levels.data.files ,
+#                   ~{ 
+#                     f = files( search = .x , 
+#                                country = country , 
+#                                dir = data.dir , 
+#                                other = "All Levels" , type = 'rds' ) 
+#                     starts_with_country = substr( f , 1, nchar(country)) == country 
+#                     not_dTs = !grepl('dTs', f , fixed = TRUE  )
+#                     is_formulaData = grepl('formulaData', f , fixed = TRUE  )
+#                     return( f[ starts_with_country & not_dTs & is_formulaData ] )
+#                   }
+# )
 
-# data.list  = tibble( 
-#   file = all.levels.data.files , 
-#   cat = map_chr( all.levels.data.files,  ~ str_split( .x , "All levels")[[1]][1] ) ,
-#   date.part = map_chr( all.levels.data.files,  ~ str_split( .x , "All levels")[[1]][2] ) )
 
-data.list = map_df( formula.names , 
-                 ~ tibble(
-                   formula.name = .x , 
-                   file = files( search = .x , other = "formulaData.rds" , 
-                         dir = data.dir  , type = "rds")  %>%
-                   most_recent_file()
-                 )
+
+data.files = map( subject ,
+                  ~{ 
+                    f = files( search = .x , 
+                               dir = data.dir , 
+                          other = "All Levels" , type = 'rds' ) 
+                    starts_with_country = substr( f , 1, nchar(country)) == country 
+                    not_dTs = !grepl('dTs', f , fixed = TRUE  )
+                    not_df.ts = !grepl(fixed( "df.ts" ), f , fixed = TRUE  )
+                    is_formulaData = grepl('formulaData', f , fixed = TRUE  )
+                    return( f[ starts_with_country & not_dTs & not_df.ts & is_formulaData ] )
+                  }
 )
 
-data.files = data.list$file
+most_recent_data_files = tibble(
+  formula = subject ,
+  file = map( data.files , most_recent_file ) 
+  ) %>%
+    mutate( date = map_chr( file, ~{
+            ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
+                    gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
+            ) } ) ,
+            days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
+            update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
+            )
+
 # 
 # data.files = data.list %>% 
 #   group_by( cat ) %>%
@@ -202,53 +239,51 @@ data.files = data.list$file
 #   select( file , cat ) %>%
 #   arrange( cat ) %>% View
 
-
 # Parallel modeling  ####
 plan( multisession )
 
-# MAD outliers ####
-re_run = FALSE 
-for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.files ) 
-  
-  file = data.files[ i ]
-  cat( paste( '\n\n\nopening' , i , ":" , file, '\n') )
-  
-  if ( grepl( fixed(".dTs.rds"), data.files[i] )  & !re_run ){
-    cat( 'data previously prepared' )
-    next
-  }
-  
-  saved.file.name = paste0( data.dir, str_replace( file , ".rds" , "") , ".df.ts.rds" ) 
-
-  
-  # load dataset  (df)
-  tic()
-  # df = read_excel( paste0( data.dir , file ) , 
-  #                  sheet = 'formulaData' , 
-  #                  guess_max = 21474836 ) 
-  df = readRDS( paste0( data.dir , file ) )
-  cat( paste( 'finished reading data' ) );   toc() 
-
-
-  # remove duplicate rows because downloads may create duplicates
-  tic()
-  nrow(df)
-  df = df %>% as.data.table() %>% unique
-  toc(); nrow(df)
-  
-  # re-format and convert to Tsibble
-
-  plan(multisession)
-  # prevent size error (https://stackoverflow.com/questions/40536067/how-to-adjust-future-global-maxsize-in-r) 
-  options(future.globals.maxSize= 891289600)
-  options(future.rng.onMisuse  = "ignore" )
-  handlers(list(
+# prevent size error (https://stackoverflow.com/questions/40536067/how-to-adjust-future-global-maxsize-in-r) 
+options(future.globals.maxSize= 891289600)
+options(future.rng.onMisuse  = "ignore" )
+handlers(list(
   handler_progress(
     format   = ":spin :current/:total (:message) [:bar] :percent in :elapsed ETA: :eta",
     width    = 60,
     complete = "+"
   )) )
+
+# MAD outliers ####
+re_run = FALSE 
+files_to_clean_mad = most_recent_data_files %>% filter( !is.na(file) ) %>% pull( file )
+for ( i in seq_along( files_to_clean_mad ) ){ #1:length( data.files ) ){ #:length( data.files ) 
   
+  file = files_to_clean_mad[ i ]
+  if ( file == "character(0)" ) next 
+  cat( paste( '\n\n\nopening' , i , ":" , file, '\n') )
+  
+  saved.file.name = paste0( data.dir, str_replace( file , ".rds" , "") , ".df.ts.rds" ) 
+
+  if ( file.exists( saved.file.name ) & !re_run ){
+    cat( 'data previously prepared' )
+    next
+  }
+  
+
+  
+  # load dataset  (df)
+  tic()
+  df = readRDS( paste0( data.dir , file ) )
+  cat( paste( 'finished reading data\n' ) );   toc() 
+
+
+  # remove duplicate rows because downloads may create duplicates
+  cat('Removing any duplicate download data')
+  df1 = nrow(df)
+  df = df %>% as.data.table() %>% unique
+  df2 = nrow(df)
+  cat('There were', df1-df2, 'duplicates' )
+  
+  # re-format and convert to Tsibble
   ## pre-condition data before converting to tsibble
   ## Convert SUM and COUNT to numeric, 
   ## period from character to Month or Week
@@ -257,6 +292,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
   n_splits = 1000
   row_splits = split( 1:nrow(df), cut_number( 1:nrow(df), n_splits ))
   
+  cat( 'Preparing data for conversion to time-series object [tsibble]')
   with_progress({
     p <- progressor(steps = n_splits )
     
@@ -266,20 +302,19 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
       df_pre_ts( df[ row_splits[[.x]], ] ) 
     } ) 
   })
-  toc()
-  
-  glimpse( df.pre.ts )
+
+  # glimpse( df.pre.ts )
   
  # Convert to tsibble
   weekly = any( grepl( "W", df.pre.ts$period[1:10]) )
   period = ifelse( weekly, "Week", "Month" )
 
-  print( 'converting to tsibble' )
-  tic()
-  df.ts = df_ts( df.pre.ts , period = period ) 
-  toc()
+  cat( 'Converting to tsibble\n' )
   
-  glimpse( df.ts )
+  df.ts = df_ts( df.pre.ts , period = period ) 
+  cat( 'Completed:' ); toc()
+  
+  # glimpse( df.ts )
   
   # Label SUM as original, to clearly denote original value
   
@@ -288,20 +323,16 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
   if ( ! 'original' %in% colnames(df.ts) ) df.ts = rename( df.ts , original = SUM ) 
   
   # fill explicit gaps
-  tic()
   n_pre.fill = nrow( df.ts )
   df.ts = df.ts %>% fill_gaps( original = NA, 
                                COUNT = 0 , .full = TRUE )
-  cat( 'filled implicit gaps with time'  ); toc()
+  cat( 'Filled implicit time gaps\n'  );# toc()
   cat(' increased from' , comma(n_pre.fill) , 'to' , 
-      comma(nrow(df.ts)) , 'rows' )
+      comma(nrow(df.ts)) , 'rows\n' )
   
   # Create value column to denote months that had data originally,
-  tic()
   df.ts = mutate( df.ts , value = !is.na( original ))
-  cat( 'added value column'  ) ; toc()
-
-  cat( 'df.ts completed '  )
+  cat( 'Added value column and df.ts completed.\n'  ) 
  
 # 
 #   tic()
@@ -327,7 +358,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
    # if ( sum( has_gaps( df.ts )$.gaps ) > 0 )  df.ts = fill_gaps( df.ts)
    # toc()
    
-   print( 'scan for key_entry_errors')
+   print( 'Scanning for repetive key entry errors\n')
    key_entry_errors =
      count(as_tibble(df.ts %>% 
                      filter( nchar(original)>3 , 
@@ -346,7 +377,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
    print( "key_entry_errors:" ) 
    print( key_entry_errors )
    
-  print( 'scanning for MAD outliers ')
+  print( 'scanning for MAD outliers')
   .total = length( key_size( df.ts ) )
 
   pb <- progress_bar$new( 
@@ -389,16 +420,21 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
                               logical = TRUE ) 
   )
 
+  cat( 'saving file as: ', saved.file.name )
   saveRDS( df.ts , saved.file.name )
 
 }
 
 # Seasonal outliers ####
-for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.files ) 
+files_to_clean_seasonal = str_replace( files_to_clean_mad , ".rds" , 
+                                  ".df.ts.rds" ) 
+
+for ( i in seq_along( files_to_clean_seasonal ) ){ #1:length( data.files ) ){ #:length( data.files ) 
   
-  file = data.files[ i ]
-  saved.file.name = paste0( data.dir, str_replace( file , ".rds" , "") , ".df.ts.rds" ) 
-  df.ts.file.name = saved.file.name
+  file = files_to_clean_seasonal[ i ]
+  if ( file == "character(0)" ) next 
+  df.ts.file.name = paste0( data.dir ,  file )
+  
   saved.file.name =  str_replace(  df.ts.file.name , ".rds" ,"_Seasonal.rds" ) 
     
   if ( file.exists( saved.file.name ) & !re_run  ){
@@ -411,7 +447,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
 
   .total = length( key_size( df.ts ) )
 
-  print( 'Seasonal 5')
+  cat( 'Seasonal 5')
   pb <- progress_bar$new( 
     format = ":current :percent  [:bar] :elapsedfull :eta ",
     total = .total, clear = FALSE, width= 50 )
@@ -429,7 +465,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
                               .pb = pb ) 
   )
 
-  print( 'Seasonal 3')
+  cat( 'Seasonal 3')
   pb <- progress_bar$new( 
     format = ":current :percent  [:bar] :elapsedfull :eta ",
     total = .total, clear = FALSE, width= 50 )
@@ -448,10 +484,11 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
   #  df.ts %>% as_tibble %>% count( value, mad15, mad10, mad5, seasonal )
   
   saveRDS( df.ts , saved.file.name )
+  # write_feather( df.ts , str_replace(saved.file.name , ".rds" , ".feather") )
   
 }
 
-# Review counts
+# Review counts ####
 
 for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.files ) 
   
@@ -509,7 +546,7 @@ for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.
     
     # select chunks of ous so that each chunk has an ous with some data.  
     # if error with 10, try 20
-    # chunks <- function(x,n) split(x, ceiling(seq_along(x)/n))
+    # chunks <- function(x,n) split(x, ceiling(seq_along(x)\n))
     # chunk_ous = chunks( 1:length(ous), 60 )
     tic()
     
