@@ -329,7 +329,9 @@ for ( i in which( most_recent_data_files$update )[ select_formulas ] ){
                  baseurl = baseurl , 
                  formula = most_recent_data_files$formula[i] ,
                  update = most_recent_data_files$update[i] & 
-                   !is.na(most_recent_data_files$file[i]) ,
+                   !( is.na(most_recent_data_files$file[i]) || 
+                        nchar(most_recent_data_files$file[i])==0 
+                      ) ,
                  check_previous_years = YrsPrevious  , 
                  previous_dataset_file = paste0( data.dir , 
                                                  most_recent_data_files$file[i]) ,
@@ -395,13 +397,15 @@ for ( i in which( !most_recent_data_files$update ) ){
   print( i )  ; print( most_recent_data_files$formula[i] ) 
 
   rdsFile = most_recent_data_files$file[i]
+  formulaData.file = str_replace( most_recent_data_files$file[i] ,
+                                      ".rds" , "_formulaData.rds")
   
-  if ( file.exists( paste0( data.dir , rdsFile) ) && !reconvert ) next
+  if ( file.exists( paste0( data.dir , formulaData.file) ) && !reconvert ) next
   
   rdsFileSplit = str_split( rdsFile, "_")[[1]]
   download_date = str_split( rdsFileSplit[length(rdsFileSplit)] , "\\.")[[1]][1]
   
-  periods = paste( rdsFileSplit[ 4:7], collapse = "_")
+  periods = paste( rdsFileSplit[ 4:5], collapse = "_")
   level = rdsFileSplit[ 3 ]
   
   data = readRDS( paste0( data.dir , rdsFile ) ) %>%
@@ -464,9 +468,7 @@ for ( i in which( !most_recent_data_files$update ) ){
       left_join( paths.translated , 
                  by = c( 'orgUnit' = 'id') ) 
   
-  formulaData.filename = str_replace( most_recent_data_files$file[i] ,
-                                ".rds" , "_formulaData.rds")
-  saveRDS( dataset , paste0( data.dir , formulaData.filename ) )
+  saveRDS( dataset , paste0( data.dir , formulaData.file ) )
 
 if ( summary | xlsx ){
   ### NB: can make column for each 'box' by id or by label
