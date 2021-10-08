@@ -13,6 +13,8 @@ runtime: shiny
 
 ```{r setup, include=FALSE}
 options(shiny.trace=FALSE)
+options(shiny.reactlog=FALSE)
+
 library(shiny)
 knitr::opts_chunk$set(echo = FALSE)
 source( "data_time_libraries.r")
@@ -25,7 +27,7 @@ pacman::p_load( officer , rvg ,
         lubridate , anytime, progressr , assertthat  , stringr, 
         readxl, patchwork, cowplot, kableExtra  ,
         tsibble, fable, fabletools, feasts  , 
-        fable.prophet ,  #fable.bsts  , 
+        fable.prophet ,  fable.bsts  , 
         slider, anomalize, brolgar   ,
         tsbox , CausalImpact , tibbletime , dygraphs  , 
         fpp3  , fabletools  , 
@@ -124,26 +126,29 @@ shift_legend3 <- function(p) {
 ```
 
 
-```{css my-css, echo = FALSE, eval = FALSE }
+```{css my-css }
 # .chart-title {
 #     font-size: 48px;
 # }
-.tab-content {
-  overflow: visible;
-}
-.selectize-control .selectize-dropdown {
-  position: static !important;
-}
-.select-control .select-dropdown {
-  position: static !important;
+
+input[type="number"] {
+  max-width: 80%;
 }
 
-/* Customize fonts */
-body, label, input, button, select { 
-  font-family: 'Helvetica Neue', Helvetica;
-  font-weight: 200;
+dashboardBody(tags$head(tags$style(HTML('
+.box {margin: 5px;}'
+)))
+
+div.outer {
+  position: fixed;
+  top: 41px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  overflow-y: auto;
+  /*overflow: hidden;*/
+  padding: 0;
 }
-h1, h2, h3, h4 { font-weight: 400; }
 
 #controls {
   /* Appearance */
@@ -156,6 +161,45 @@ h1, h2, h3, h4 { font-weight: 400; }
   transition: opacity 500ms 1s;
   overflow-y: auto;
 }
+
+#controls:hover {
+  /* Fade in while hovering */
+  opacity: 0.95;
+  transition-delay: 0;
+}
+
+/* Position and style citation */
+#cite {
+  position: absolute;
+  bottom: 10px;
+  left: 10px;
+  font-size: 12px;
+}
+
+/* If not using map tiles, show a white background */
+.leaflet-container {
+  background-color: white !important;
+}
+
+.tab-content {
+  overflow: visible;
+}
+
+.selectize-control .selectize-dropdown {
+  position: static !important;
+}
+
+.select-control .select-dropdown {
+  position: static !important;
+}
+
+/* Customize fonts */
+body, label, input, button, select { 
+  font-family: 'Helvetica Neue', Helvetica;
+  font-weight: 200;
+}
+
+h1, h2, h3, h4 { font-weight: 400; }
 
 #controls:hover {
   /* Fade in while hovering */
@@ -207,7 +251,12 @@ selectInput("level5", label = "OrgUnit Level5" ,
   
   checkboxInput( "mostReports", label ='Most frequently reporting facilities', value = TRUE ) ,
   
-  textInput( "startingYear", label = "begining with", value = "2017" ) ,
+  selectInput( "startingMonth", label = "begining with", 
+               choices = NULL ,
+               selected = NULL ) ,
+  selectInput( "endingMonth", label = "ending with", 
+               choices = NULL , 
+               selected = NULL ) ,
   
   actionButton( "screenshot" , "Screenshot" ) ,
   
@@ -248,6 +297,27 @@ observeEvent( input$screenshot , {
 })
 ```
 
+
+```{r reporting_month_updates}
+
+observeEvent(  dates() , {  
+  updateSelectInput( session, 'startingMonth' ,
+          choices =  dates()  , 
+          selected = min( dates(), na.rm = TRUE )
+  )
+  } )
+
+
+observeEvent(  dates() , {  
+  updateSelectInput( session, 'endingMonth' ,
+          choices =  dates()  , 
+          selected = max( dates(), na.rm = TRUE )
+  )
+  } )
+
+
+
+```
 
 
 
@@ -332,9 +402,12 @@ inputPanel(
               choices = c( 'leaf' ) ,
               selected = NULL ) ,
  
- checkboxInput('hts', label = "Use administrative hierarchy", 
+ checkboxInput('hts', label = "Aggregate across full administrative hierarchy", 
                value = TRUE ) ,
  
+ selectInput("hts_level", label = "Aggregate only from level:" ,
+              choices = 2:4 ,
+              selected = 2 ) ,
  
  checkboxInput( "exclude_recent_month" , label ='Exclude most recent month?',
                value = TRUE  ) 
@@ -456,6 +529,8 @@ dataset = reactive({
   
   print( "nrow( dataset )" ); print( nrow( dataset ) )
   print( "add dataset info from formulas")
+  # glimpse( dataset )
+  # glimpse( formula_elements() )
   
   dataset = dataset %>%
     as_tibble() %>%
@@ -466,7 +541,7 @@ dataset = reactive({
   
   print( "nrow( dataset )" ); print( nrow( dataset ) )
   print("done"); toc()
-  print( 'glimpse( dataset )' ); # glimpse( dataset )
+  # print( 'glimpse( dataset )' ); # glimpse( dataset )
   #   glimpse( formula_elements() )
 
   return( dataset )
@@ -677,8 +752,9 @@ d = reactive({
   req( period() )
   print( 'd:')
   
-  data = dataset()  
   .period = period()
+  data = dataset()  %>% mutate( period = !!rlang::sym( .period ))
+  
   
   if ( !is_empty( input$level2 ) ){
     print( paste( 'filtering data by' , levelNames()[2] , "=" , input$level2 ) )
@@ -740,7 +816,7 @@ if ( !is_empty( input$level5 ) ){
   
   # print( 'd: max period ' ); print( max( d$period ))
   print( 'd: max period ' ); 
-  print( max( data %>% pull( !! rlang::sym( .period )  ) , 
+  print( max( data %>% pull( period  ) , 
               na.rm = TRUE ))
   # print( max( data$Month , na.rm = TRUE ))
   
@@ -934,10 +1010,11 @@ observeEvent( input$plot2_brush  , {
 selectedOUs <- reactive({
   print( 'selectedOUS()' )
   tic()
-  req( input$startingYear )
+  req( input$endingMonth )
   
   if ( input$mostReports ){
      print( "determining most frequently reported facilities..." ); 
+     print(input$startingMonth  ) ; print( input$endingMonth )
     
     data = d()
     
@@ -946,8 +1023,23 @@ selectedOUs <- reactive({
         data = data %>% filter( data %in% input$data_categories )
      }
 
-     mr = data %>% as_tibble %>%
-       filter( year( !! rlang::sym( period() )  ) >= as.integer( input$startingYear ) ) %>% 
+     if ( period() %in% 'Month' ){
+       data = data %>% as_tibble %>%
+       filter( 
+         period >=  yearmonth( input$startingMonth )  ,
+         period <=  yearmonth( input$endingMonth )  
+               )
+     } 
+    
+     if ( period() %in% 'Week' ){
+       data = data %>% as_tibble %>%
+       filter( 
+         period >=  yearweek( input$startingMonth )  ,
+         period <=  yearweek( input$endingMonth )  
+               )
+     } 
+    
+     mr = data %>% 
        distinct( !! rlang::sym( period() ) , orgUnit ) %>%
        group_by( orgUnit ) %>%
        summarise( n = n() ) %>%
@@ -1257,13 +1349,10 @@ plotData = reactive({
    if ( length( selectedOUs()) > 0 ) data  = data %>%
       mutate( Selected = ifelse( 
         orgUnit %in% selectedOUs() , 
-        'Reporting Each Month', 
+        'Reporting Each Period', 
         'Inconsistent Reporting' )
       )
     
-    # compare original and cleaned
-    # print( paste('original - dataCol = ', sum( data$original , na.rm = T ) - sum( data$dataCol , na.rm = T )) )
-  
     print( 'end  plotData()')  ; # print( names( data )) 
   return( data )
 })
@@ -1308,9 +1397,22 @@ data.total = reactive({
     # %>% 
     #   group_by(  !!! dataset_group_by_cols  ) 
     print( 'setDT(data):' )
-    data = setDT(data)[ , .( total = sum( dataCol , na.rm = TRUE  ) ) ,
+    
+    
+    # testing exogenous regressors
+    if (input$covariates %in% c( 'ipti' , 'doses' ) ){
+      data = setDT(data)[ , .( total = sum( dataCol , na.rm = TRUE  ) ,
+                               doses = sum( doses, na.rm = TRUE ) ,
+                               ipti = sum( ipti, na.rm = TRUE )
+                               ) ,
                            by = .group_by_cols ] %>% 
       as_tibble()
+    } else {
+          
+      data = setDT(data)[ , .( total = sum( dataCol , na.rm = TRUE  ) ) ,
+                           by = .group_by_cols ] %>% 
+      as_tibble()
+    }
     
     # Merge  datasets 
     # Set all dataSets to Combined and re-summaries taking mean
@@ -1342,7 +1444,7 @@ data.total = reactive({
                   str_replace_all(fixed("\r"), "") ) %>%
         filter( ! dataSet %in% input$merge ) 
       
-      print( 'dataNotMerge' );  glimpse( dataNotMerge )
+      # print( 'dataNotMerge' );  glimpse( dataNotMerge )
       
       if ( nrow( dataNotMerge ) > 0 & input$dataset_merge ){
         
@@ -1416,7 +1518,8 @@ hts = reactive({
   if (input$hts){ 
     hts = paste( adms, collapse = "/" ) 
   } else {
-    hts = paste( adms[1:3], collapse = "/" ) 
+    hts = paste( adms[1:as.integer(input$hts_level)] , 
+                 collapse = "/" ) 
   }
   
   hts = paste( "(" , hts , ")" )
@@ -1450,11 +1553,21 @@ data.hts = reactive({
   print( 'data.hts():' );   tic()
 
   .d = data.total()
-
-  .d = .d %>%
+  
+  # testing exogenous vaiables
+  if ( input$covariates %in% c('ipti' , 'doses' ) ){
+    .d = .d %>%
+    aggregate_key(  .spec = !!rlang::parse_expr( hts() ) ,
+                    total = sum( total , na.rm = T ) ,
+                    ipti = sum( !!rlang::parse_expr( 'ipti' ) , na.rm = T ) ,
+                    doses = sum( !!rlang::parse_expr( 'doses' ) , na.rm = T )
+                    ) 
+  } else {
+      .d = .d %>%
     aggregate_key(  .spec = !!rlang::parse_expr( hts() ) ,
                     total = sum( total , na.rm = T )
                     ) 
+  }
   
   print( 'end data.hts():' ) ; toc()
     return(.d)
@@ -1462,7 +1575,7 @@ data.hts = reactive({
 
 aggregatePlotData = reactive({
    req( data.hts() )
-   print( 'aggregatePlotData()' )
+   print( 'aggregatePlotData():' )
   
   .d = data.hts() %>% 
       filter( 
@@ -1530,6 +1643,8 @@ plotAgregateValue = reactive({
   print( 'plotAgregateValue():' )
 
   .d = aggregatePlotData()
+  
+  saveRDS(.d, 'plot3_data.rds')
   
   data.text = paste( unique( plotData()$data ),
                      collapse = " + " ) 
@@ -1635,7 +1750,9 @@ ous.file = reactive({
                                               fixed = TRUE  )]
     
     print( "ous.files:" ) ; print( ous.files )
-    if (  is_empty(ous.files) ) return( NULL )
+    if (  is_empty(ous.files) ){
+      cat("WARNING: missing file geoFeatures.rds or newOUS.rds ")
+    } 
   
     f = paste0( dir, most_recent_file( ous.files ) )
     }
@@ -2020,7 +2137,7 @@ output$plot_dTs.stl <- renderPlot({  plot_dTs.stl()  })
 ```
 
 
-Table 
+Facilities 
 ====================================
 
 ```{r dataTable}
@@ -2112,11 +2229,17 @@ dates = reactive({
 
 selectInput("evaluation_month", label = "Starting evaluation:" , 
               choices = NULL , 
-              selected = NULL ) 
+              selected = NULL,
+            selectize = FALSE ,
+            size = 4 ) 
 
+div(id = "expr-container",
 selectInput("horizon", label = "Number periods after intervention:" , 
               choices = c(3,6,12,18,24,36) , 
-              selected = 12 ) 
+              selected = 12 ,
+            selectize = FALSE ,
+            size = 4 ) 
+)
 
 
 ```
@@ -2140,7 +2263,13 @@ checkboxInput( "pre_evaluation" , label ='Pre-intervention model fit',
 checkboxInput( "evaluation" , label ='Post-intervention evaluation',
                value = FALSE  ) 
 
-checkboxInput( "scale" , label ='Scale values (x-mean)/sd + 1)',
+# checkboxInput( "scale" , label ='Scale values (x-mean)/sd + 1)',
+#                value = FALSE  ) 
+
+checkboxInput('components', label = 'Visualize trend' ,
+            value = FALSE )
+
+checkboxInput( "forecast_ci" , label ='Confidence interval',
                value = FALSE  ) 
 
 
@@ -2153,24 +2282,33 @@ checkboxInput( "scale" , label ='Scale values (x-mean)/sd + 1)',
 
 
 selectInput("model", label = "Time-series model:" , 
-              choices = c('ETS' , 'ARIMA', 'Prophet') , 
+              choices = c('ETS' , 'ARIMA', 'BSTS' , 'Prophet', 
+                          'TSLM', 'TSLM (trend)', 
+                          'TSLM (trend+season)') , 
               selected = 'ETS'  ) 
 
 
-checkboxInput( "forecast_ci" , label ='Confidence interval',
-               value = FALSE  ) 
 
 # checkboxInput('reconcile', label = 'Reconcile models' ,
 #             value = FALSE )
 
-checkboxInput('components', label = 'Visualize model components' ,
-            value = FALSE )
+# selectInput("transform", label = "Transformation:" , 
+#               choices = c('None', 'Log', 'Box-Cox(.5)', 
+#                           'Box-Cox(auto)') , 
+#               selected = 'None'  ) 
+
+
+textInput('model.formula', 'Model Formula' ,
+          value =  'total ~ 1' )
+
+textInput('covariates', 'Model covariates' ,
+          value =  NULL )
 
 ```
 
 ### Administrative Hierarchy
 
-```{r}
+```{r adm_hierarchies_1}
 
 
 selectInput("agg_level", label = "Aggregate to" , 
@@ -2194,7 +2332,7 @@ checkboxInput( "plotly" , label ='Plotly Chart',
 
 ```
 
-```{r adm_hierarchies}
+```{r adm_hierarchies_2}
 
 
 
@@ -2408,7 +2546,7 @@ key.mape = reactive({
       mutate( !! input$agg_level := 
                 as.character( !! rlang::sym( input$agg_level  ) ) )
   
-  print( "end key.mape"); glimpse(e )
+  print( "end key.mape"); #glimpse(e )
   return( e )
 })
 
@@ -2499,7 +2637,20 @@ trendData = reactive({
   .d = data.hts()
   
   if (input$selected & num_facilities() > 1 ){
-    .d = .d %>% filter( Selected ==  'Reporting Each Month'  )
+    .d = .d %>% filter( 
+      Selected ==  'Reporting Each Period' )
+    
+    if ( period() %in% 'Month' ){ 
+      .d = .d %>% filter( 
+        Month >=  yearmonth( input$startingMonth )   ,
+        Month <= yearmonth( input$endingMonth )  )
+    }
+      
+    if ( period() %in% 'Week' ){ 
+      .d = .d %>% filter( 
+        Week >=  yearweek( input$startingMonth )   ,
+        Week <= yearweek( input$endingMonth )  )
+    }
   } 
     
   print( "input$agg_level:" ); print( input$agg_level )
@@ -2583,13 +2734,13 @@ trendData = reactive({
     #       filter( .data[[ input$split ]] %in% input$filter_data )
     # }
   
-  if ( input$scale ) .d = .d %>% 
-      ungroup() %>%
-      mutate( 
-        total = scale( total ) + 1
-    )
+  # if ( input$scale ) .d = .d %>% 
+  #     ungroup() %>%
+  #     mutate( 
+  #       total = scale( total ) + 1
+  #   )
   
-  print( 'end trend data():'); print( glimpse( .d ) ); # print(.d)
+  print( 'end trend data():'); # print( glimpse( .d ) ); # print(.d)
 
   
   return( .d )
@@ -2600,12 +2751,54 @@ trendData = reactive({
 ```{r models_forecasts}
 evaluationParameters <- reactiveValues( Month  = NULL )
 
+model_formula = reactive({
+  req( input$model.formula )
+  print( 'model_formula' )
+
+    
+  # if (input$model %in% 'BSTS'){
+  #   f = as.formula( 'total ~ intercept()' ) 
+  #   
+  # } 
+  
+  if (input$model %in% 'ARIMA' ){
+    formula.string = paste( 'fabletools::box_cox( total , lambda = .5  ) ~ ',
+                            ' pdq() ' ,  
+                            '+ PDQ( period = 12 )' 
+    )
+     if ( nchar( input$covariates ) > 0 ) formula.string = 
+         paste( formula.string , '+ xreg(' , input$covariates , ' ) ' )
+     
+     f = as.formula( formula.string)
+  }
+  
+  if (input$model %in% 'BSTS' ){
+     f = as.formula( paste( 'total ~ season("year")' 
+                       )
+     )
+     }
+                     
+   if ( any(input$model %in% c( 'TSLM', 'ETS',  'Prophet' ) ) ){
+      
+    f = as.formula(  input$model.formula )
+
+    }
+
+  print( 'end model_formula' ); print( f )
+  return( f )
+})
+
 tsModel = reactive({
   req( trendData() )
+  req( model_formula() )
   req( input$evaluation_month )
   
   if ( !input$evaluation ) return( NULL )
-  print( 'tsModel' )
+  print( 'tsModel():' )
+  print( paste('available vars:', 
+               paste( names(trendData()), collapse = ',') 
+               )
+  )
   
   # Filter data to period just before evaluation start
   print( input$evaluation_month )
@@ -2616,14 +2809,42 @@ tsModel = reactive({
     filter_index( ~ as.character( time_period ) ,
                   .preserve = TRUE )
   
+  if (input$model %in% 'TSLM' ){
+    fit = fit.data %>% model( l = TSLM( model_formula() ) ) 
+    print( 'end tsModel():' )
+    return( fit )
+    } 
+  
+  if (input$model %in% 'TSLM (trend)' ){
+    fit = fit.data %>% model( l = TSLM( total ~ trend()  ) )
+    print( 'end tsModel():' )
+    return( fit )
+  } 
+  
+  if (input$model %in% 'TSLM (trend+season)' ){
+    fit = fit.data %>% model( l = TSLM( total ~ trend() + season() ) )
+    print( 'end tsModel():' )
+    return( fit )
+  } 
+  
   if (input$model %in% 'ARIMA' ){
-    fit = fit.data %>% model( a = ARIMA( total ) ) 
-    
+    fit = fit.data %>% model( 
+      arima = ARIMA( model_formula()  )
+      )    
   # if ( input$reconcile ) fit = fit %>% 
   #       reconcile( 
   #         mint = min_trace(a, method = "mint_shrink") 
   #         )
-    
+    print( 'end tsModel(): arima fit' )
+    glimpse( fit )
+    # testing model fit for forecasts
+    if ( input$covariates %in% c('ipti', 'doses') ) saveRDS( fit , 'arima.rds' )
+    return( fit )
+  } 
+  
+  if (input$model %in% 'BSTS' ){
+    fit = fit.data %>% model( b = BSTS( model_formula() ) )
+    print( 'end tsModel():' )
     return( fit )
   } 
   
@@ -2636,7 +2857,7 @@ tsModel = reactive({
   #       reconcile( 
   #         mint = min_trace(a, method = "mint_shrink") 
   #         )
-    
+    print( 'end tsModel():' )
     return( fit )
   } 
   
@@ -2644,18 +2865,20 @@ tsModel = reactive({
     fit =  fit.data %>% model( 
             prophet = prophet( total ~
 
-                                    growth( type = 'logistic',
+                                    growth( type = 'linear',
                                             changepoint_range = 1 ,
                                             changepoint_prior_scale = 1 ,
-                                            capacity = 1e5 ,
-                                            floor = 0 ) +
+                                            # capacity = 1e5 ,
+                                            # floor = 0 
+                                            ) +
                                     season(period=12, 
                                            order = 4 ,
                                            type='multiplicative'),
-                               seed = TRUE)
+                               seed = TRUE ,
+                               future.seed=TRUE )
         )
    
-    print( 'model fit' )
+    print( 'end tsModel():' )
     return( fit )
   } 
   
@@ -2664,32 +2887,59 @@ tsModel = reactive({
 tsPreModel = reactive({
   req( trendData() )
   req( input$evaluation_month )
-  
+
   if ( !input$pre_evaluation ) return( NULL )
+  print( 'tsPreModel():' )
 
   eval_month = input$evaluation_month 
   time_period = yearmonth( eval_month  ) - 12
   
   fit.data  = trendData() %>%
-    filter_index( ~ as.character( time_period ) )
+    filter_index( ~ as.character( time_period ) ,
+                  .preserve = TRUE )
   
-
-   if (input$model %in% 'ARIMA' ){
+    if (input$model %in% 'TSLM' ){
+    fit = fit.data %>% model( l = TSLM( model_formula() ) ) 
+    print( 'end tsPreModel():' )
+    return( fit )
+    } 
+  
+  if (input$model %in% 'TSLM (trend)' ){
+    fit = fit.data %>% model( l = TSLM( total ~ trend()  ) )
+    print( 'end tsPreModel():' )
+    return( fit )
+  } 
+  
+  if (input$model %in% 'TSLM (trend+season)' ){
+    fit = fit.data %>% model( l = TSLM( total ~ trend() + season() ) )
+    print( 'end tsPreModel():' )
+    return( fit )
+  } 
+  
+  if (input$model %in% 'ARIMA' ){
     fit = fit.data %>% model( 
-      arima = ARIMA( fabletools::box_cox( total , lambda = .5  ) ~
-                                    pdq( 0:2, 0:1, 0:2 ) +
-                       PDQ( 0:2, 0:1, 0:2 ,  period = 12 )  )
-      )
-   } 
+      arima = ARIMA( model_formula()  )
+      )    
+    print( 'end tsPreModel(): arima fit' )
+    return( fit )
+  } 
+  
+  if (input$model %in% 'BSTS' ){
+    fit = fit.data %>% model( b = BSTS( model_formula() ) )
+    print( 'end tsPreModel():' )
+    return( fit )
+  } 
   
   if (input$model %in% 'ETS' ){
     fit = fit.data %>% model( a = ETS( total )  ) 
     
-  # if ( input$reconcile  ) fit = fit %>% 
-  #       reconcile( 
-  #         mint = min_trace(base, method = "mint_shrink") 
-  #         )
+    print('ETS model') ; #print( fit )
     
+  # if ( input$reconcile ) fit = fit %>% 
+  #       reconcile( 
+  #         mint = min_trace(a, method = "mint_shrink") 
+  #         )
+    print( 'end tsPreModel():' )
     return( fit )
   } 
   
@@ -2697,20 +2947,22 @@ tsPreModel = reactive({
     fit =  fit.data %>% model( 
             prophet = prophet( total ~
 
-                                    growth( type = 'logistic',
+                                    growth( type = 'linear',
                                             changepoint_range = 1 ,
                                             changepoint_prior_scale = 1 ,
-                                            capacity = 1e5 ,
-                                            floor = 0 ) +
+                                            # capacity = 1e5 ,
+                                            # floor = 0 
+                                            ) +
                                     season(period=12, 
                                            order = 4 ,
                                            type='multiplicative'),
-                               seed = TRUE)
+                               seed = TRUE ,
+                               future.seed=TRUE )
         )
-  }
-
-  print( 'pre fit' ); # glimpse( fit )
-  return( fit )
+   
+    print( 'end tsPreModel():' )
+    return( fit )
+  } 
   
 })
 
@@ -2766,9 +3018,11 @@ plotTrends = reactive({
   # req( input$evaluation_month )
   print( 'plotTrends():' )
 
-  .limits = if ( input$scale ){
-    c( NA , NA ) } else { 
-      c( 0 , NA ) }
+  .limits =
+  # if ( input$scale ){
+  #   c( NA , NA ) } else {
+      c( 0 , NA ) 
+  # }
  
   data.text = paste( unique( plotData()$data ), collapse = " + " )
   
@@ -2779,7 +3033,7 @@ plotTrends = reactive({
   #         filter( .data[[ input$split ]] %in%
   #                   input$filter_display )
 
-   
+  tic() 
   g = .d %>%
   autoplot( total ) +
     # ggplot( aes(x = Month, y = total
@@ -2788,14 +3042,18 @@ plotTrends = reactive({
     #         ) )  +
     # geom_line() +
   theme_minimal() 
+  save(.d, file = 'plot-trend-test-data.rda')
+  # TESTING: 
   
-  print( 'basic plot done' )
+  
+  print( 'basic plot done' ); toc()
   
   if ( !input$legend ) g = g + 
     theme(legend.position = "none")
   
   if ( !input$split %in% 'None' ){ 
     g = g + geom_label_repel( 
+               data = .d %>% filter( Month == max( .d$Month , na.rm = T )) ,
                aes( label = grouping_var , group = grouping_var )
                )
   }
@@ -3024,168 +3282,6 @@ selectInput("Reps", label = "Iterations" ,
 ```{r significance_functions}
 
 forecast_distribution = function( forecast, var ){
-  
-    cat( 'forecast_distribution:')
-  
-    if ( ! "fbl_ts" %in% class( forecast ) ) cat("missing fbl_ts")
-    
-    # get components 
-    var = enquo( var )
-    r = forecast %>% pull( {{var}} )
-    
-    r.names = map( r, names ) %>% unlist %>% unique
-    print( 'forecast_distribution r.names:' ) ; print( r.names )
-      
-    if ( 'x' %in% r.names ){
-        
-       cat( 'forecast_distribution: x')
-      
-        # dist <- map( r, "x")
-        trans <- map( r, "transform") 
-
-        # differnece between forecast and actual
-        rd = forecast %>% 
-          mutate(
-            dist <- map( {{var}} , "x") 
-            # trans = map( value, "transform") ,
-            , .fore = map( dist, ~.x  )
-          ) 
-        
-        print( 'end forecast_distribution: x')
-        return( rd )
-        
-      }
-      
-    if ( 'dist' %in% r.names ){
-      
-      cat( 'forecast_distribution: dist')
-        
-        dist <- map( r, "dist")
-        trans <- map( r, "transform")
-        # generate 
-        gt = map( 1:length(r), ~{
-          t = trans[[.x]]
-          g = generate( dist[[.x]] ) %>% t 
-          return(g)
-        }  ) %>% unlist
-        
-        # differnece between forecast and actual
-        t = map( forecast$value, "transform")[[1]]
-        rd = forecast %>% 
-          mutate(
-            dist = map( {{var}}, "dist") ,
-            # trans = map( value, "transform") ,
-            .fore = map( dist, ~generate(.x) %>% t ) ,
-          ) 
-        
-        cat( 'end forecast_distribution: dist')
-        return( rd )
-        
-      }
-}
-
-# Difference over each iteration, which is naturally weighted
-mpe_distribution = function( forecast_distribution , var ){
-    
-  cat(' mpe_distribution:' )
-    var = enquo( var )
-    
-    index = tsibble::index( forecast_distribution )
-    
-    forecast_distribution %>%
-    unnest( .fore ) %>% 
-    group_by( {{ index }} ) %>%
-    mutate( n = row_number() ,
-            .fore = ifelse( is.na( {{var}}), NA, .fore ) 
-            ) %>%
-    group_by( n ) %>%
-    summarise( 
-        actual = sum( {{var}}, na.rm = T ) ,
-        .fore = sum( .fore , na.rm = T) 
-        ) %>%
-    ungroup() %>%
-    mutate( mpe = ( actual- .fore )/ .fore ,
-            mape = abs( actual- .fore )/ .fore ) 
-}
-
-# function to get probability than impact, e, greater than a value
-prb_change_lte = function( target_mpe , pe ){
-   pe = enquo( pe )
-   
-   mpe %>%
-     summarise(
-       n = sum( !is.na( {{pe}} ) ) ,
-       pe_lte_target = sum( {{pe}} <= target_mpe ) 
-     ) %>%
-     mutate( x = pe_lte_target / n ) %>%
-     pull( x )
-   
-}
-
-# plot error
-mpe_plot = function( .data , var, rope_range  = NULL   ){
-   var = enquo( var )
-   
-   me = .data %>% pull({{ var }})
-   
-   mean_me = mean( me , na.rm = T )
-   
-   cri = HDInterval::hdi( me , credMass = 0.9 ) %>% as.numeric()
-   cri_label = paste( '90% credible interval:\n[', 
-                      percent(cri[1], accuracy  = .1 ) , " - ", 
-                      percent(cri[2] , accuracy  = .1 ) , "]" , sep = "" )
-   
-   mpe_rope = rope( me , range =  rope_range )
-   mpe_rope_label = paste( 'Probabality in ROPE*\n [', 
-                           percent( rope_range[1], accuracy = .1 ) , "-" , 
-                           percent( rope_range[2] , accuracy = .1) , ']:', 
-                           percent( mpe_rope$ROPE_Percentage , accuracy = .1 ) )
-   
-   # Title text...
-   # if ( "mpe" %in%  var )
-  
-  g = 
-    ggplot( data = .data , aes( x = {{ var }} )) +
-    geom_histogram( aes(  y = ..count../sum(..count..) ) ,
-                    fill = 'dark gray', color = 'gray', binwidth = .01 ) +
-    theme_minimal() +
-    scale_x_continuous( labels = percent_format(accuracy = 1) , 
-                        breaks = seq(-1, 1, .1) ) +
-    labs( title = 'Posterior Distribution of Error' ,
-          # subtitle = {{ var }} ,
-          y = 'Probability' 
-          # x = {{ var }} ,
-          # , caption = "*Region of Practical Equivalence"
-          )
-
-  # add mean
-  g = g + 
-    # geom_vline( aes( xintercept = mean(e) ) , linetype = 'dashed' ) +
-    annotate( "segment" , x =  mean_me , xend =  mean_me , y = 0 , yend = .1 , 
-              color = 'black' , linetype = 'dashed')  + 
-    geom_text( aes( x = mean_me ,
-                    y = .1  , 
-                    label = paste('Mean:' , percent( mean_me , accuracy  = .1 )  ) ) )  +
-    
-    # cri
-    annotate( "segment" , x = cri[1] , xend = cri[1] , y = 0 , yend = .5 , color = 'blue' )  + 
-    annotate( "segment" , x = cri[2] , xend = cri[2] , y = 0 , yend = .5 , color = 'blue' )  +
-    annotate( "text" , x = cri[1] , y = .4 , color = 'blue', label = cri_label , hjust = - 0.1 ) 
-    
-    # rope
-  if ( !is.null( rope_range ) ) g = g +
-    annotate( "segment" , 
-              x = mpe_rope$ROPE_low , 
-              xend = mpe_rope$ROPE_low , y = 0 , yend = .5 , color = 'brown' )  + 
-    annotate( "segment" , 
-              x = mpe_rope$ROPE_high , 
-              xend = mpe_rope$ROPE_high , y = 0 , yend = .5 , color = 'brown' )  +
-    annotate( "text" , x =  0  , y = .5 , color = 'brown', 
-              label = mpe_rope_label , hjust = .5 , vjust = 1 )
-  
-  return( g )
-  }#### functionalize
-forecast_distribution = function( forecast, var ){
     if ( ! "fbl_ts" %in% class( forecast ) ) cat("missing fbl_ts")
     
     # get components 
@@ -3398,7 +3494,7 @@ sigData = reactive({
     rename( actual = total ) %>%
     semi_join( fd %>% as_tibble() ) %>% pull( actual )
   
-  print( 'forecast distribution'); glimpse( fd )
+  print( 'forecast distribution'); # glimpse( fd )
   
   print( 'end sigData():' )
   return( fd )

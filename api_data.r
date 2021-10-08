@@ -89,18 +89,36 @@ is_date = function(x, format = NULL) {
   return(is_date)
 }
 
+# most_recent_file = function( file_list_with_date ){
+#   
+#   if ( is_empty( file_list_with_date ) ||  
+#        file_list_with_date == 'character(0)' ) return("")
+#   
+#   rdsFileSplit = str_split( file_list_with_date, "_")
+#   # download_date = map( rdsFileSplit ,
+#   #                      ~str_split( .x[ length(.x)] , "\\.")[[1]]
+#   # ) %>% map_chr(1) 
+#   
+#   dates  = map( rdsFileSplit , ~ anydate(.x)  ) %>% 
+#       map(., max, na.rm = T) %>% unlist
+#   
+#   if ( identical( dates , character(0) ) ) return( NA )
+#   
+#   # most recent file 
+#   file = file_list_with_date[ which( dates == max(dates, na.rm = T ) ) ]
+#   
+#   return ( file )
+# }
+
 most_recent_file = function( file_list_with_date ){
   
-  if ( is_empty( file_list_with_date ) ||  
-       file_list_with_date == 'character(0)' ) return("")
-  
   rdsFileSplit = str_split( file_list_with_date, "_")
-  # download_date = map( rdsFileSplit ,
-  #                      ~str_split( .x[ length(.x)] , "\\.")[[1]]
-  # ) %>% map_chr(1) 
   
-  dates  = map( rdsFileSplit , ~ anydate(.x)  ) %>% 
-      map(., max, na.rm = T) %>% unlist
+  download_date = map( rdsFileSplit ,
+                       ~str_split( .x[ length(.x)] , "\\.")[[1]]
+  ) %>% map_chr(1) 
+  
+  dates  = map_chr( download_date , ~ anydate(.x)  )
   
   if ( identical( dates , character(0) ) ) return( NA )
   
@@ -195,11 +213,12 @@ fetch <- function( baseurl. , de. , periods. , orgUnits. , aggregationType. , .p
   }
   
 fetch_get <- function( baseurl. , de. , periods. , orgUnits. , aggregationType. ,
-                       get.print = FALSE ){
+                       get.print = FALSE, username = NULL , password = NULL ){
     
     url = api_url( baseurl. , de. , periods. , orgUnits. , aggregationType. )
     
-    fetch = retry( get( url , .print = get.print )[[1]] ) # if time-out or other error, will retry 
+    
+    fetch = retry( get( url , .print = get.print , username, password )[[1]] ) # if time-out or other error, will retry 
     # fetch = get( url , .print = get.print )
     
     # print( paste( 'fetch class' , class( fetch ) ) )
@@ -215,23 +234,17 @@ fetch_get <- function( baseurl. , de. , periods. , orgUnits. , aggregationType. 
       cols = colnames( fetch ) 
       
       unneeded.cols = which( cols %in% c( 'storedBy', 'created', 'lastUpdated', 'comment' ))
-    
-      # print( glimpse( fetch )  )
       
-      # print( paste( 'unneeded cols' , 
-      #               paste( unneeded.cols , collapse = "," ))
+      data.return = fetch %>% select( -all_of(unneeded.cols) ) %>% as_tibble()
+      
+      # if (get.print) print( paste( 'col names data', 
+      #               paste( colnames( data.return ) , collapse = "," ) 
+      #               )
       # )
       
-      data.return = fetch %>% select( -unneeded.cols ) %>% as_tibble()
-      
-      if (get.print) print( paste( 'col names data', 
-                    paste( colnames( data.return ) , collapse = "," ) 
-                    )
-      )
+      if ( get.print ) cat( paste( nrow( fetch ) , 'records\n' ) )
       
       } else {
-      
-      if ( get.print ) cat( paste( nrow( fetch ) , 'records\n' ) )
       
       de.cat = str_split( de. , fixed(".")) %>% unlist  
       
@@ -262,41 +275,53 @@ translate_fetch = function( df , formulaElements = NULL , ous = NULL ){
   multiple_categoryOptionCombos = count( formulaElements , categoryOptionCombo.ids ) %>%
     filter( n > 1 ) %>% nrow == 0 
   
-  if ( !multiple_dataElements |  !multiple_categoryOptionCombos ){
+  if ( (!multiple_dataElements |  !multiple_categoryOptionCombos ) & !all( is.na( df$categoryOptionCombo ))){
     
       de.coc = formulaElements  %>% 
       separate_rows( Categories , categoryOptionCombo.ids, sep = ";" ) %>%
       mutate( Categories = Categories %>% str_trim  ,
-              categoryOptionCombo.ids = categoryOptionCombo.ids %>% str_trim )
+              categoryOptionCombo.ids = categoryOptionCombo.ids %>% str_trim ,
+              dataElement.id = dataElement.id %>% str_trim ) %>% 
+              select( dataElement, dataElement.id ,
+                      Categories , categoryOptionCombo.ids )
       
-  } else { de.coc = formulaElements }
+  } else { de.coc = formulaElements %>% 
+                   select( dataElement, dataElement.id  ,) %>% 
+                   mutate( dataElement.id = dataElement.id %>% str_trim ,
+                           Categories = "" ) 
+  }
   
-
-      df %>%
+      .by =  c( "dataElement.id" , "categoryOptionCombo.ids" )
+      if ( all( is.na( df$categoryOptionCombo ))) .by = "dataElement.id"
+      
+      translated_df = df %>%
       
       rename( dataElement.id = dataElement , 
               categoryOptionCombo.ids = categoryOptionCombo 
       ) %>%
-      
-      left_join( de.coc %>% 
-                   select( dataElement, dataElement.id , 
-                           Categories, categoryOptionCombo.ids ) %>% 
-                   mutate( dataElement.id = dataElement.id %>% str_trim ,
-                           categoryOptionCombo.ids = categoryOptionCombo.ids %>% str_trim )  ,
-                 by = c( "dataElement.id" , "categoryOptionCombo.ids" )
-      ) %>%
+      left_join( de.coc %>% select( dataElement.id , dataElement ) %>% distinct ,  
+                 by = 'dataElement.id' ) %>%
+      left_join( de.coc  %>% select( categoryOptionCombo.ids , Categories ) %>% distinct , 
+                 by = 'categoryOptionCombo.ids' ) %>%
+        
+      # left_join( de.coc  ,  by = .by ) %>%
       
       left_join( ous %>% 
                    select( id, name, level, levelName )  %>% 
                    rename( orgUnit = id , orgUnitName = name ) ,
                  by = 'orgUnit' 
       )  
+      
+      return( translated_df )
   }
  
 api_data = function(      periods = "LAST_YEAR" ,
+                          periodType = 'Monthly' ,
                           level = 'All levels' ,
                           elements = NA ,
                           baseurl = NA , 
+                          username = NULL , 
+                          password = NULL , 
                           formula = NA , 
                           parallel = FALSE ,
                           print = TRUE ,
@@ -321,14 +346,18 @@ api_data = function(      periods = "LAST_YEAR" ,
     
   period_vectors = strsplit( periods , ";" , fixed = TRUE )[[1]]
     
+  if ( update & !file.exists( previous_dataset_file )){
+        cat('previous data file missing') 
+  } 
+  
   ## UPDATE data options ####
-    if ( update ){
-      if (!file.exists( previous_dataset_file )){
-        cat('previous data file missing') ; next()
-      } 
+    if ( update & file.exists( previous_dataset_file ) ){
       
-      # check for last 2 years only 
-      periods = date_code( YrsPrevious = check_previous_years )
+      
+      # check for last x years only 
+      if ( periodType == 'Monthly') periods = date_code( YrsPrevious = check_previous_years ) # 'months_last_5_years' # 
+      if ( periodType == 'Weekly') periods = date_code_weekly( YrsPrevious = check_previous_years )
+
       period_vectors = strsplit( periods , ";" , fixed = TRUE )[[1]]
       
       # excel version
@@ -432,9 +461,8 @@ api_data = function(      periods = "LAST_YEAR" ,
         period_vectors = update.periods
         
     } else {
-       if ( print ) print( cat( 'Periods requested are' ,
-                                  paste( period_vectors , collapse = ';') , "\n" )
-       )
+       if ( print ) cat( 'Periods requested are' ,
+                         paste( period_vectors , collapse = ';') , "\n" )
     } 
   
 
@@ -454,7 +482,13 @@ api_data = function(      periods = "LAST_YEAR" ,
   if ( print ) cat( 'Requesting data for' , 
                     paste( orgUnits , collapse = ';') , "\n" 
   )
-    
+  
+  # Elements
+  elements = strsplit( elements , ";" , fixed = TRUE )[[1]]
+  if ( print ) cat( 'Requesting data for' , 
+                    paste( elements , collapse = ';') , "elements", "\n" 
+  )
+  
   ## Fetch requests ####
   
   if ( parallel ) plan( multisession ) # plan( multisession ) for windows
@@ -468,17 +502,25 @@ api_data = function(      periods = "LAST_YEAR" ,
       )
     ))
 
-    v2 <- expand_grid( period_vectors , orgUnits )
-    
+    # v2 <- expand_grid( period_vectors , orgUnits )
+    # df of imputs for parallel mapping (pmap)
+    pmap.df = expand.grid( period_vectors, orgUnits, elements ) 
+    if ( print ) cat( 'Making' , 
+                    nrow( pmap.df ), "data requests" , "\n" 
+  )  
+      
     with_progress({
-      p <- progressor( steps = nrow( v2 ) )
+      # p <- progressor( steps = nrow( v2 ) )
+      p <- progressor( steps = nrow( pmap.df ) )
     
       d = 
-        future_map2( 
-           v2$period_vectors, 
-           v2$orgUnits 
-           , 
-            .f = ~{
+        # future_map2( 
+        future_pmap( 
+          pmap.df
+           # v2$period_vectors, 
+           # v2$orgUnits 
+           ,
+          .f = function( Var1, Var2, Var3 ){
                 
                   if ( !is.null( p ) ) p()
         
@@ -486,21 +528,37 @@ api_data = function(      periods = "LAST_YEAR" ,
             # if ( print ) message( paste( "" , formula, " : " , .x , .y , 
             #               parse_date_time( Sys.time(), '%I:%M:%S %p') )  )
 
-              
-            d.sum = fetch_get(  baseurl. = baseurl , de. = elements , 
-                                periods. = .x , orgUnits. = .y , "SUM" )  
-           
-            d.count = fetch_get(  baseurl. = baseurl , de. = elements , 
-                                  periods. = .x  , orgUnits. = .y , "COUNT" )
+            # cat( Var1, Var2, Var3 )
             
+            d.sum = fetch_get(  baseurl. = baseurl , de. = Var3 , 
+                                periods. = Var1, orgUnits. = Var2 , "SUM" ,
+                                get.print = print)  
+           
+            d.count = fetch_get(  baseurl. = baseurl , de. = Var3 , 
+                                  periods. = Var1  , orgUnits. = Var2 , "COUNT" ,
+                                  get.print = print) 
+            
+            #if elements have a period, then include categoryOptionCombo
+            if ( any(str_detect( elements  , fixed(".") )) ){
+              .by = c("dataElement", "period", "orgUnit", "categoryOptionCombo")
+            } else {
+              .by = c("dataElement", "period", "orgUnit")
+            }
+            
+            # Join d.sum and d.count
             d = d.count %>%
                   rename( COUNT = value ) %>%
                   full_join( d.sum %>% rename( SUM = value ) 
                             # ,  by = c("dataElement", "dataElement.id", "Categories" , "categoryOptionCombo.ids", "period", "orgUnit", "orgUnitName" ,  "level" , "levelName")
-                            , by = c("dataElement", "period", "orgUnit", "categoryOptionCombo")
+                            , by = .by
                             )
             
             d = d %>% select(-starts_with('aggreg'))
+            
+            cat(  Var1, Var2, Var3, nrow(d), 'records\n')
+            
+            # Save data up to this point
+            
             
             return( d )
                 

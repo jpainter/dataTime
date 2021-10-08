@@ -51,10 +51,7 @@ retry <- function( expr, isError=function(x) "try-error" %in% class(x),
 ## gets json text from url and converts to data frame 
 get = function( source_url , .print = TRUE , json = TRUE , ...){
   
-  # Login if credentials provided
-  if ( exists( 'baseurl' ) ){
-    if ( !loginDHIS2( baseurl, username, password) ) return('no connection')
-  }
+
     
   # https://stackoverflow.com/questions/57198836
   httr::set_config(httr::config(ssl_verifypeer=0L))
@@ -64,7 +61,13 @@ get = function( source_url , .print = TRUE , json = TRUE , ...){
     print( Sys.time() )
   } 
   
-  from_url =  GET( source_url ) 
+    # Login if credentials provided
+  if ( !is.null( username ) && !is.null( password ) ){
+    from_url =  GET( source_url , authenticate( username, password)  ) 
+  } else {
+    from_url =  GET( source_url ) 
+  }
+  
   
   # print( 'GET completed')
   # print( from_url )
@@ -83,13 +86,12 @@ get = function( source_url , .print = TRUE , json = TRUE , ...){
   } 
   
   # test if return valid content
+  print( 'testing if json: ' )
   is.json = jsonlite::validate( get_content )
+  print( is.json ) 
   
-  if ( .print )  print( paste( 'testing if json' , is.json ) )
-  
-  if ( json ){ 
-    
-    if ( !is.json ){
+  if ( !is.json ){ 
+
       print( get_content )
       return( NA )
       
@@ -97,18 +99,12 @@ get = function( source_url , .print = TRUE , json = TRUE , ...){
 
       g = fromJSON( get_content ) 
       
-      if (length(g) == 0) return( NA ) 
-      
-      return( g )
+      if (length(g) == 0){
+          return( NA ) 
+        } else {
+          return( g )
+        }
     }
-    
-  } else {
-    g = get_content 
-    return( g )
-  }
-  
-  
-  
 }
 
 get_in_parts = function( baseurl. , de. , periods. , orgUnits. , aggregationType. ){

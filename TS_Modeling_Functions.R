@@ -59,9 +59,12 @@ df_pre_ts = function( df , period = "Month" , missing.value = NA  ){
      df = df %>% mutate( Month =  Month_Year( period ) )
      df_pre_ts = df %>%
        mutate( COUNT = as.numeric( COUNT ) ,
-            SUM = as.numeric( SUM )
+            SUM = as.numeric( SUM ) ,
+            Categories = ifelse( is.na( Categories ), "", Categories )
             ) %>%
-       unite( "data" , dataElement, Categories ) 
+       unite( "data" , dataElement, Categories , remove = FALSE ) %>%
+       unite( "data.id" , dataElement.id, categoryOptionCombo.ids, remove = FALSE  ) 
+       
        # rename( raw = SUM ) %>%
        # pivot_longer( c( SUM , COUNT ) )
        # as_tsibble( key = c(orgUnit, data, name ) , index = !! .period ) %>%
@@ -86,7 +89,9 @@ df_pre_ts = function( df , period = "Month" , missing.value = NA  ){
                        SUM = as.numeric( SUM ) 
                        ) ] %>%
        as_tibble() %>%
-       unite( "data" , dataElement, Categories ) 
+       unite( "data" , dataElement, ifelse( is.na( Categories ) ,
+                                            "", Categories ) 
+       )
        # rename( raw = SUM ) %>%
        # pivot_longer( c( SUM , COUNT ) ) 
        # as_tsibble( key = c(orgUnit, data, name ) , index = !! .period ) %>%
@@ -108,7 +113,7 @@ df_ts = function( df.pre.ts , period = "Month" ,
    # .period = rlang::enquo( period )
   
   ts = df.pre.ts %>%  
-    as_tsibble( key = c(orgUnit, data ) , index = !! period ) 
+    as_tsibble( key = c(orgUnit, data.id, data ) , index = !! period ) 
 
     # set NA to missing 
     if ( fill.gaps ) ts = ts %>% fill_gaps( value = missing.value , .full = TRUE )

@@ -43,6 +43,19 @@ source( 'clean_ts.r' )
 source( 'model_ts2.r' )
 source( 'api_data.r' )
 
+most_recent_file = function( file_list_with_date ){
+  
+  rdsFileSplit = str_split( file_list_with_date, "_")
+  
+  download_date = map( rdsFileSplit , ~.x[ anydate(.x) %>% is_date() %>% which %>% max ] ) %>% unlist
+  
+  if ( identical( download_date , character(0) ) ) return( NA )
+  
+  # most recent file 
+  file = file_list_with_date[ which( download_date == max(download_date, na.rm = T ) ) ]
+  
+  return ( file )
+}
 
 Month_Year = function( x ){ yearmonth( zoo::as.yearmon( x , "%Y%m") ) }
 
@@ -205,30 +218,60 @@ formula.names = formulas$Formula.Name
 # )
 
 
+# 
+# data.files = map( formula.names ,
+#                   ~{ 
+#                     f = files( search = .x , 
+#                                dir = data.dir , 
+#                           other = "All Levels" , type = 'rds' ) 
+#                     starts_with_country = substr( f , 1, nchar(country)) == country 
+#                     not_dTs = !grepl('dTs', f , fixed = TRUE  )
+#                     not_df.ts = !grepl(fixed( "df.ts" ), f , fixed = TRUE  )
+#                     is_formulaData = grepl('formulaData', f , fixed = TRUE  )
+#                     return( f[ starts_with_country & not_dTs & not_df.ts & is_formulaData ] )
+#                   }
+# )
+# 
+# most_recent_data_files = tibble(
+#   formula = formula.names ,
+#   file = map( data.files , most_recent_file ) 
+#   ) %>%
+#     mutate( date = map_chr( file, ~{
+#             ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
+#                     gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
+#             ) } ) ,
+#             days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
+#             update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
+#             )
+
 
 data.files = map( subject ,
                   ~{ 
-                    f = files( search = .x , 
+                    f = files( search = paste0("_" , .x , "_" ) , 
+                               country = country , 
                                dir = data.dir , 
                           other = "All Levels" , type = 'rds' ) 
                     starts_with_country = substr( f , 1, nchar(country)) == country 
                     not_dTs = !grepl('dTs', f , fixed = TRUE  )
-                    not_df.ts = !grepl(fixed( "df.ts" ), f , fixed = TRUE  )
-                    is_formulaData = grepl('formulaData', f , fixed = TRUE  )
-                    return( f[ starts_with_country & not_dTs & not_df.ts & is_formulaData ] )
+                    not_formulaData = !grepl('formulaData', f , fixed = TRUE  )
+                    return( f[ starts_with_country & not_dTs & not_formulaData ] )
                   }
 )
+
+# data.files
+
+## Find most recent file 
 
 most_recent_data_files = tibble(
   formula = subject ,
   file = map( data.files , most_recent_file ) 
   ) %>%
     mutate( date = map_chr( file, ~{
-            ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
+            ifelse( is_empty( .x ) || nchar(.x) == 0 , "" , 
                     gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
             ) } ) ,
-            days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
-            update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
+            days_old = ifelse( nchar( date ) == 0 , NA , Sys.Date() - anydate( date ) ) ,
+            update = ifelse(  nchar( date ) == 0 | days_old > 30   , TRUE , FALSE )
             )
 
 # 
@@ -255,15 +298,21 @@ handlers(list(
 # MAD outliers ####
 re_run = FALSE 
 files_to_clean_mad = most_recent_data_files %>% filter( !is.na(file) ) %>% pull( file )
+
 for ( i in seq_along( files_to_clean_mad ) ){ #1:length( data.files ) ){ #:length( data.files ) 
   
   file = files_to_clean_mad[ i ]
   if ( file == "character(0)" ) next 
   cat( paste( '\n\n\nopening' , i , ":" , file, '\n') )
   
-  saved.file.name = paste0( data.dir, str_replace( file , ".rds" , "") , ".df.ts.rds" ) 
+  saved.file.name = c(
+    paste0( data.dir, str_replace( file , ".rds" , "") , ".df.ts.rds" ) ,
+    paste0( data.dir, str_replace( file , ".rds" , "") , ".dTs.rds" ) ,
+    paste0( data.dir, str_replace( file , ".rds" , "") , ".dTs_Seasonal.rds" ) ,
+    paste0( data.dir, str_replace( file , ".rds" , "") , ".df.ts_Seasonal.rds" ) 
+  )
 
-  if ( file.exists( saved.file.name ) & !re_run ){
+  if ( any( file.exists( saved.file.name ) ) & !re_run ){
     cat( 'data previously prepared' )
     next
   }
@@ -287,7 +336,7 @@ for ( i in seq_along( files_to_clean_mad ) ){ #1:length( data.files ) ){ #:lengt
   ## pre-condition data before converting to tsibble
   ## Convert SUM and COUNT to numeric, 
   ## period from character to Month or Week
-  tic()
+
   # split into 1000 chunks and observe progress
   n_splits = 1000
   row_splits = split( 1:nrow(df), cut_number( 1:nrow(df), n_splits ))
@@ -310,7 +359,7 @@ for ( i in seq_along( files_to_clean_mad ) ){ #1:length( data.files ) ){ #:lengt
   period = ifelse( weekly, "Week", "Month" )
 
   cat( 'Converting to tsibble\n' )
-  
+  tic()
   df.ts = df_ts( df.pre.ts , period = period ) 
   cat( 'Completed:' ); toc()
   
@@ -420,8 +469,8 @@ for ( i in seq_along( files_to_clean_mad ) ){ #1:length( data.files ) ){ #:lengt
                               logical = TRUE ) 
   )
 
-  cat( 'saving file as: ', saved.file.name )
-  saveRDS( df.ts , saved.file.name )
+  cat( 'saving file as: ', saved.file.name[1] )
+  saveRDS( df.ts , saved.file.name[1] )
 
 }
 
@@ -438,7 +487,7 @@ for ( i in seq_along( files_to_clean_seasonal ) ){ #1:length( data.files ) ){ #:
   saved.file.name =  str_replace(  df.ts.file.name , ".rds" ,"_Seasonal.rds" ) 
     
   if ( file.exists( saved.file.name ) & !re_run  ){
-    cat( 'data previously prepared' )
+    cat( saved.file.name , 'previously prepared\n' )
     next
   }
   
@@ -490,14 +539,17 @@ for ( i in seq_along( files_to_clean_seasonal ) ){ #1:length( data.files ) ){ #:
 
 # Review counts ####
 
-for ( i in seq_along( data.files ) ){ #1:length( data.files ) ){ #:length( data.files ) 
+for ( i in seq_along( files_to_clean_seasonal ) ){ #1:length( data.files ) ){ #:length( data.files ) 
   
-  file = data.files[ i ]
+  file = files_to_clean_seasonal[ i ]
+  if ( file == "character(0)" ) next 
+  df.ts.file.name = paste0( data.dir ,  file )
+  saved.file.name =  str_replace(  df.ts.file.name , ".rds" ,"_Seasonal.rds" ) 
   
   cat( paste( '\n\n\nopening' , i , ":" , saved.file.name, '\n') )
-  df.ts = readRDS( saved.file.name )
+  df.ts = readRDS( df.ts.file.name )
   
-  df.ts %>% as_tibble %>% count( mad10, mad5, seasonal5 , seasonal3 ) %>% 
+  df.ts %>% as_tibble %>% count( mad15, mad10, mad5, seasonal5 , seasonal3 ) %>% 
     print
   
 }

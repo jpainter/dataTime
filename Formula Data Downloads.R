@@ -13,9 +13,24 @@ pacman::p_load( scales, knitr,  #gsubfn  for strapplyc, line 221
 
 source('dhis2_functions.R')  
 source( 'Deviation_Expected_Functions.R')
-source( 'API.r')
-source( 'api_data.r')
+source( 'API.r') # loginDHIS2 and api_data
+source( 'api_data.r') #replaces api_data
 
+most_recent_file = function( file_list_with_date ){
+  
+  if ( is_empty( file_list_with_date ) ) return(NULL)
+  
+  rdsFileSplit = str_split( file_list_with_date, "_")
+  
+  download_date = map( rdsFileSplit , ~.x[ anydate(.x) %>% is_date() %>% which %>% max ] ) %>% unlist
+  
+  if ( identical( download_date , character(0) ) ) return( NA )
+  
+  # most recent file 
+  file = file_list_with_date[ which( download_date == max(download_date, na.rm = T ) ) ]
+  
+  return ( file )
+}
 
 string_wrap = function(string, nwrap=20) {
   paste(strwrap(string, width=nwrap), collapse="\n")
@@ -41,7 +56,7 @@ baseurl = NULL
 username = NULL 
 password = NULL 
 
-
+# Read in file with credentials 
 source('DHIS2details.txt') # Copies in dhis2 login details.  
 
 # Confirm login credentials
@@ -60,11 +75,6 @@ if ( any( is_empty( c(baseurl, username, password ) )) ){
 
 loginurl <-paste0( baseurl , "api/me" )
 GET( loginurl, authenticate( username, password ) )
-
-
-# First time this file is run, a rather length process maps the facility hierarchy
-# if need to update, change to TRUE 
-ous_update = FALSE   
 
 
 # Formulas  ####
@@ -126,6 +136,10 @@ dataElements = DataElements( metadata.filename )
 # OUS structure ####
 ous = orgUnits
 ous.levels = orgUnitLevels
+
+# First time this file is run, a rather length process maps the facility hierarchy
+# if need to update, change to TRUE 
+ous_update = FALSE   
 
 
 # NIGERIA Exception
@@ -242,7 +256,7 @@ subject = formulas$Formula.Name
 
 data.files = map( subject ,
                   ~{ 
-                    f = files( search = .x , 
+                    f = files( search = paste0("_" , .x , "_" ) , 
                                country = country , 
                                dir = data.dir , 
                           other = "All Levels" , type = 'rds' ) 
@@ -262,24 +276,25 @@ most_recent_data_files = tibble(
   file = map( data.files , most_recent_file ) 
   ) %>%
     mutate( date = map_chr( file, ~{
-            ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
+            ifelse( is_empty( .x ) || nchar(.x) == 0 , "" , 
                     gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
             ) } ) ,
-            days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
-            update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
+            days_old = ifelse( nchar( date ) == 0 , NA , Sys.Date() - anydate( date ) ) ,
+            update = ifelse(  nchar( date ) == 0 | days_old > 30   , TRUE , FALSE )
             )
 
 # View( most_recent_data_files )
 print( most_recent_data_files )
 
-# Optional chance to select specific formulas. Ex c(5,7,8,10).  To get all, set = TRUE 
-select_formulas = TRUE # c(5,7,8,10) 
 
 # Request data ----
 
 ## Parameters 
 level = 'All levels' # all org units
-YrsPrevious  = 6 # number of years of data to request 
+YrsPrevious  = 10 # number of years of data to request 
+
+# Optional chance to select specific formulas. Ex c(5,7,8,10).  To get all, set = TRUE 
+select_formulas = TRUE # c(2,4,6,7,8) 
 
 # QR periods 
 # periods = "202010;202011;202012;202101;202102;202103"
@@ -290,7 +305,10 @@ for ( i in which( most_recent_data_files$update )[ select_formulas ] ){
   
   elements = formula.elements %>% 
     filter( Formula.Name %in%  most_recent_data_files$formula[i] ) %>%
-    select( dataElement.id , categoryOptionCombo.ids ) %>%
+    select( dataElement.id 
+            , categoryOptionCombo.ids 
+            ) %>% 
+    distinct %>%
     unite( "de" , sep = "." ) %>% 
     pull(de ) %>% 
     paste( collapse =  ";" )
@@ -308,7 +326,7 @@ for ( i in which( most_recent_data_files$update )[ select_formulas ] ){
   
   # Periods
   periodType = formula.elements %>%
-    filter( Formula.Name %in% most_recent_data_files$formula[i] ) %>%
+    filter( Formula.Name %in% most_recent_data_files$formula[i] ) %>% 
     pull( periodType ) %>% max
   
   if ( periodType == 'Monthly') periods = date_code( YrsPrevious = YrsPrevious ) # 'months_last_5_years' # 
@@ -323,17 +341,21 @@ for ( i in which( most_recent_data_files$update )[ select_formulas ] ){
   
   if ( ! loginDHIS2(baseurl, username, password ) ) stop()
   
-  x  = api_data( periods = periods , 
-                 level = level , 
-                 elements = elements, 
-                 baseurl = baseurl , 
+  x  = api_data(
+                 periods = periods ,
+                 periodType = periodType , 
+                 level = level ,
+                 elements = elements,
+                 baseurl = baseurl ,
+                 username = username, 
+                 password = password ,
                  formula = most_recent_data_files$formula[i] ,
-                 update = most_recent_data_files$update[i] & 
-                   !( is.na(most_recent_data_files$file[i]) || 
-                        nchar(most_recent_data_files$file[i])==0 
+                 update = most_recent_data_files$update[i] &
+                   !( is.na(most_recent_data_files$file[i]) ||
+                        nchar(most_recent_data_files$file[i])==0
                       ) ,
-                 check_previous_years = YrsPrevious  , 
-                 previous_dataset_file = paste0( data.dir , 
+                 check_previous_years = YrsPrevious  ,
+                 previous_dataset_file = paste0( data.dir ,
                                                  most_recent_data_files$file[i]) ,
                  dir = data.dir
                  )
@@ -352,7 +374,6 @@ for ( i in which( most_recent_data_files$update )[ select_formulas ] ){
 }
 
 # Update list of downloaded files ----
-
 data.files = map( subject ,
                   ~{ 
                     f = files( search = .x , 
