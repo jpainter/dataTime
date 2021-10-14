@@ -126,18 +126,112 @@ shift_legend3 <- function(p) {
 ```
 
 
+<!-- CSS defaults: -->
+<!-- https://github.com/rstudio/flexdashboard/blob/feature/logo-and-favicon/inst/rmarkdown/templates/flex_dashboard/resources/flexdashboard.css -->
+
 ```{css my-css }
-# .chart-title {
-#     font-size: 48px;
-# }
+
+
+.chart-title {
+     font-size: 10px;
+}
+
+.chart{
+    margin: 0px
+}
+
+.shiny-input-container{
+    margin: 0px
+}
+
+.checkbox{
+    margin: 0px
+}
+
+.selectize-input { 
+    font-size: 10pt; 
+    font-weight: bold;
+    margin: 0 0 0 0;
+    white-space: nowrap;
+    padding: 5px;
+    } 
+    
+.select-input { 
+    font-size: 10pt; 
+    font-weight: bold;
+    margin: 0 0 0 0;
+    white-space: nowrap;
+    padding: 5px;
+    } 
+    
+.checkbox-input { 
+    margin: 0px
+    }
+
+.value-box > .inner {
+  padding: 5px;
+  padding-left: 5px;
+  padding-right: 5px;
+}
+
+.value-box .value {
+  font-size: 10px;
+  font-weight: bold;
+  margin: 0 0 0 0;
+  white-space: nowrap;
+  padding: 0;
+}
+
+.value-box .caption {
+  font-size: 5px;
+}
+
+.section.sidebar {
+  position: fixed;
+  top: 51px; /* overridden by theme */
+  left: 0;
+  bottom: 0;
+  border-right: 1px solid #e2e2e2;
+  background-color: white; /* overridden by theme */
+  padding-left: 5px;
+  padding-right: 5px;
+  visibility: hidden;
+}
+
+.section.sidebar form p:first-child {
+  margin-top: 5px;
+}
+
+.storyboard-nav {
+    box-sizing: border-box;
+    width: 100% !important; /* This prevents JS transformation on width */
+    height: auto; /* This overrides the height */
+}
+
+.storyboard-nav .sbnext, .storyboard-nav .sbprev {
+    height: auto; /* This overrides the height */
+    font-size: 3rem;
+}
+
+.storyboard-nav .sbframelist {
+    height: auto; /* This overrides the height */
+}
+
+.storyboard-nav .sbframelist ul {
+    box-sizing: border-box;
+    width: 100% !important; /* This prevents JS transformation on width */
+    height: auto; /* This overrides the height */
+}
+
+.storyboard-nav .sbframelist ul li {
+    height: auto; /* This overrides the height */
+    width: auto; /* This overrides the width */
+}
+
 
 input[type="number"] {
   max-width: 80%;
 }
-
-dashboardBody(tags$head(tags$style(HTML('
-.box {margin: 5px;}'
-)))
 
 div.outer {
   position: fixed;
@@ -153,7 +247,7 @@ div.outer {
 #controls {
   /* Appearance */
   background-color: white;
-  padding: 0 20px 20px 20px;
+  padding: 0 10px 10px 10px;
   cursor: move;
   /* Fade out while not hovering */
   opacity: 0.65;
@@ -196,10 +290,10 @@ div.outer {
 /* Customize fonts */
 body, label, input, button, select { 
   font-family: 'Helvetica Neue', Helvetica;
-  font-weight: 200;
+  font-weight: 100;
 }
 
-h1, h2, h3, h4 { font-weight: 400; }
+h1, h2, h3, h4 { font-weight: 200; }
 
 #controls:hover {
   /* Fade in while hovering */
