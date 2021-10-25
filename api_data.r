@@ -329,6 +329,7 @@ api_data = function(      periods = "LAST_YEAR" ,
                           check_previous_years = 2 , 
                           previous_dataset_file = NULL ,
                           dir = country.dir ,
+                          shinyApp = FALSE ,
                           ...
 ){
   tic()
@@ -508,8 +509,65 @@ api_data = function(      periods = "LAST_YEAR" ,
     if ( print ) cat( 'Making' , 
                     nrow( pmap.df ), "data requests" , "\n" 
   )  
-      
-    with_progress({
+     
+   # if used within shiny, use withProgressShiny()
+   if (shinyApp == TRUE ){
+      withProgressShiny(message = "Starting downloads",
+                        detail = "in progress ...", 
+                        value = 0, {
+       p <- progressor( steps = nrow( pmap.df ) )
+    
+      d = 
+        future_pmap( 
+          pmap.df
+           ,
+          .f = function( Var1, Var2, Var3 ){
+                
+                  if ( !is.null( p ) ) p()
+        
+            # tic()
+            # if ( print ) message( paste( "" , formula, " : " , .x , .y , 
+            #               parse_date_time( Sys.time(), '%I:%M:%S %p') )  )
+
+            # cat( Var1, Var2, Var3 )
+            
+            d.sum = fetch_get(  baseurl. = baseurl , de. = Var3 , 
+                                periods. = Var1, orgUnits. = Var2 , "SUM" ,
+                                get.print = print)  
+           
+            d.count = fetch_get(  baseurl. = baseurl , de. = Var3 , 
+                                  periods. = Var1  , orgUnits. = Var2 , "COUNT" ,
+                                  get.print = print) 
+            
+            #if elements have a period, then include categoryOptionCombo
+            if ( any(str_detect( elements  , fixed(".") )) ){
+              .by = c("dataElement", "period", "orgUnit", "categoryOptionCombo")
+            } else {
+              .by = c("dataElement", "period", "orgUnit")
+            }
+            
+            # Join d.sum and d.count
+            d = d.count %>%
+                  rename( COUNT = value ) %>%
+                  full_join( d.sum %>% rename( SUM = value ) 
+                            # ,  by = c("dataElement", "dataElement.id", "Categories" , "categoryOptionCombo.ids", "period", "orgUnit", "orgUnitName" ,  "level" , "levelName")
+                            , by = .by
+                            )
+            
+            d = d %>% select(-starts_with('aggreg'))
+            
+            cat(  Var1, Var2, Var3, nrow(d), 'records\n')
+            
+            # Save data up to this point
+            
+            
+            return( d )
+                
+            } 
+        )
+    })
+    } else {
+        with_progress({
       # p <- progressor( steps = nrow( v2 ) )
       p <- progressor( steps = nrow( pmap.df ) )
     
@@ -565,6 +623,8 @@ api_data = function(      periods = "LAST_YEAR" ,
             } 
         )
     })
+    }
+    
     
      if ( print ) message( "binding downloads" )
      d = bind_rows( d )
@@ -573,7 +633,7 @@ api_data = function(      periods = "LAST_YEAR" ,
      if ( print ) message( toc() )
      
      # update value in most_recent_data_file
-     if ( update ){
+     if ( update & file.exists( previous_dataset_file ) ){
 
        good.prev.data = prev.data %>% filter( !period %in% unique( d$period ))
        

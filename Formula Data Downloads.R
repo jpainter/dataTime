@@ -267,21 +267,34 @@ data.files = map( subject ,
                   }
 )
 
+
 # data.files
 
 ## Find most recent file 
+
+YrsPrevious  = 5 # number of years of data to request 
 
 most_recent_data_files = tibble(
   formula = subject ,
   file = map( data.files , most_recent_file ) 
   ) %>%
     mutate( date = map_chr( file, ~{
-            ifelse( is_empty( .x ) || nchar(.x) == 0 , "" , 
+            ifelse( is.na( .x ) || nchar(.x) == 0 , "" , 
                     gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
             ) } ) ,
             days_old = ifelse( nchar( date ) == 0 , NA , Sys.Date() - anydate( date ) ) ,
-            update = ifelse(  nchar( date ) == 0 | days_old > 30   , TRUE , FALSE )
-            )
+ 
+            YearsData = map_dbl( file, ~{
+            ifelse( is.na( .x ) || nchar(.x) == 0 , NA ,
+                    gsubfn::strapply( .x, "[0-9]{6,}" ) %>% 
+                        map_dbl(., ~time_length( difftime(anydate(.x[2]) , anydate(.x[1]) ) , 'years' ) %>% 
+                                    floor ) 
+            ) } ) ,
+           update = ifelse(  nchar( date ) == 0 | 
+                                 days_old > 30 | 
+                                 YrsPrevious > YearsData, TRUE , FALSE ) 
+            
+    )
 
 # View( most_recent_data_files )
 print( most_recent_data_files )
@@ -291,7 +304,7 @@ print( most_recent_data_files )
 
 ## Parameters 
 level = 'All levels' # all org units
-YrsPrevious  = 10 # number of years of data to request 
+
 
 # Optional chance to select specific formulas. Ex c(5,7,8,10).  To get all, set = TRUE 
 select_formulas = TRUE # c(2,4,6,7,8) 
@@ -394,13 +407,23 @@ most_recent_data_files = tibble(
   formula = subject ,
   file = map( data.files , most_recent_file ) 
 ) %>%
-  mutate( date = map_chr( file, ~{
-    ifelse( is.na( .x ) | nchar(.x) == 0 , NA , 
-            gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
-    ) } ) ,
-    days_old = ifelse( is.na( date ) , NA, Sys.Date() - anydate( date ) ) ,
-    update = ifelse( is.na( date ) | days_old > 30   , TRUE , FALSE )
-  )
+    mutate( date = map_chr( file, ~{
+            ifelse( is.na( .x ) || nchar(.x) == 0 , "" , 
+                    gsubfn::strapply( .x, "[0-9-]{10,}", simplify = TRUE) 
+            ) } ) ,
+            days_old = ifelse( nchar( date ) == 0 , NA , Sys.Date() - anydate( date ) ) ,
+ 
+            YearsData = map_dbl( file, ~{
+            ifelse( is.na( .x ) || nchar(.x) == 0 , NA ,
+                    gsubfn::strapply( .x, "[0-9]{6,}" ) %>% 
+                        map_dbl(., ~time_length( difftime(anydate(.x[2]) , anydate(.x[1]) ) , 'years' ) %>% 
+                                    floor ) 
+            ) } ) ,
+           update = ifelse(  nchar( date ) == 0 | 
+                                 days_old > 30 | 
+                                 YrsPrevious > YearsData, TRUE , FALSE ) 
+            
+    )
 
 # View( most_recent_data_files )
 print( most_recent_data_files )
